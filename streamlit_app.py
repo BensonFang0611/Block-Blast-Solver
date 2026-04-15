@@ -34,8 +34,8 @@ def draw_piece_preview_5x5(piece_grid):
         for c in range(cols):
             if piece_grid[r][c]:
                 tr, tc = r + offset_r, c + offset_c
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 160, 200), -1)
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 80, 100), 1)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (200, 160, 0), -1)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (100, 80, 0), 1)
     return canvas
 
 # --- 🛠️ 輔助功能 2：上傳圖片到 ImgBB ---
