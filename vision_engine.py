@@ -5,8 +5,8 @@ import copy
 class VisionEngine:
     def __init__(self, cv_img):
         self.img_orig = cv_img
-        self.img_debug = None           # 舊版二值化 Debug 圖
-        self.img_debug_color = None     # 新版全彩 Debug 圖
+        self.img_debug = None           
+        self.img_debug_color = None     
         self.grid_state = [[0]*8 for _ in range(8)]
         self.detected_pieces = []
         self.warp_orig = None
@@ -22,7 +22,6 @@ class VisionEngine:
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
         
-        # 初始化兩張不同的 Debug 圖
         self.img_debug = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
         self.img_debug_color = self.img_orig.copy()
 
@@ -77,9 +76,13 @@ class VisionEngine:
         bg_q = min(top_qs, key=lambda x: sum(x[0]))[0]
         bg_color_mean = np.mean([mc for r, c, mc in centers_color if (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20)) == bg_q], axis=0)
 
+        # [階段 B] 計算盤面狀態
         grid_thresh = [[0]*8 for _ in range(8)]
         grid_color = [[0]*8 for _ in range(8)]
         
+        sum_board_t = 0
+        sum_board_c = 0
+
         for r in range(8):
             for c in range(8):
                 # 二值化判定
@@ -87,42 +90,16 @@ class VisionEngine:
                 y_s, y_e = int((r + 0.15) * u), int((r + 0.85) * u)
                 roi_t = warp_loc[y_s:y_e, x_s:x_e]
                 white_ratio = cv2.countNonZero(roi_t) / roi_t.size if roi_t.size > 0 else 0
-                grid_thresh[r][c] = 1 if white_ratio > 0.01 else 0
+                if white_ratio > 0.01:
+                    grid_thresh[r][c] = 1
+                    sum_board_t += 1
 
                 # 顏色判定
                 mc = centers_color[r*8 + c][2]
                 dist = np.linalg.norm(mc - bg_color_mean)
-                grid_color[r][c] = 1 if dist > 45 else 0
-
-        sum_t = sum(sum(row) for row in grid_thresh)
-        sum_c = sum(sum(row) for row in grid_color)
-        
-        self.thresh_count += sum_t
-        self.color_count += sum_c
-        
-        if sum_c > sum_t:
-            self.grid_state = grid_color
-            self.chosen_method = "新版顏色判定 (Color)"
-        else:
-            self.grid_state = grid_thresh
-            self.chosen_method = "舊版二值化判定 (Threshold)"
-
-        # 分別繪製 8x8 格線狀態到各自的 Debug 圖
-        for r in range(8):
-            for c in range(8):
-                # 畫二值化圖
-                is_t = grid_thresh[r][c] == 1
-                inner_cp_t = self.get_cell_poly_sampling(pts1, r, c, 0.15, 0.85)
-                color_t = (0, 0, 255) if is_t else (0, 0, 200)
-                cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (0, 150, 0), 1)
-                cv2.polylines(self.img_debug, [inner_cp_t], True, color_t, 2 if is_t else 1)
-
-                # 畫全彩顏色圖
-                is_c = grid_color[r][c] == 1
-                inner_cp_c = self.get_cell_poly_sampling(pts1, r, c, 0.45, 0.55) # 中心 10%
-                color_c = (0, 0, 255) if is_c else (0, 0, 200)
-                cv2.polylines(self.img_debug_color, [self.get_cell_poly(pts1, r, c)], True, (0, 150, 0), 1)
-                cv2.polylines(self.img_debug_color, [inner_cp_c], True, color_c, 2 if is_c else 1)
+                if dist > 45:
+                    grid_color[r][c] = 1
+                    sum_board_c += 1
 
         # ====== 4. 找待放物區域 ======
         img_h = self.img_orig.shape[0]
@@ -151,18 +128,63 @@ class VisionEngine:
         final_list = filtered_pieces[:3]
         p_unit = orig_unit * self.piece_scale
         
+        temp_pieces_t = []
+        temp_pieces_c = []
+        sum_pieces_t = 0
+        sum_pieces_c = 0
+        
+        # [階段 C] 計算待放物狀態
         for x, ay, pw, ph, _ in final_list:
             mask = thresh[ay:ay+ph, x:x+pw]
             color_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            self.detected_pieces.append(self.parse_piece_strict(mask, color_roi, pw, ph, p_unit, x, ay))
+            g_t, g_c, s_t, s_c = self.parse_piece_strict(mask, color_roi, pw, ph, p_unit, x, ay)
+            temp_pieces_t.append(g_t)
+            temp_pieces_c.append(g_c)
+            sum_pieces_t += s_t
+            sum_pieces_c += s_c
+            
+        # ====== 5. 總結算 (修正：計算完棋盤+方塊再決定用哪個) ======
+        self.thresh_count = sum_board_t + sum_pieces_t
+        self.color_count = sum_board_c + sum_pieces_c
         
+        if self.color_count > self.thresh_count:
+            self.grid_state = grid_color
+            self.detected_pieces = temp_pieces_c
+            self.chosen_method = "新版顏色判定 (Color)"
+        else:
+            self.grid_state = grid_thresh
+            self.detected_pieces = temp_pieces_t
+            self.chosen_method = "舊版二值化判定 (Threshold)"
+
+        # ====== 6. 繪製棋盤狀態到各自的 Debug 圖 ======
+        for r in range(8):
+            for c in range(8):
+                # 畫二值化圖 (綠色底格，紅/暗紅判定)
+                is_t = grid_thresh[r][c] == 1
+                inner_cp_t = self.get_cell_poly_sampling(pts1, r, c, 0.15, 0.85)
+                color_t = (0, 0, 255) if is_t else (0, 0, 200)
+                cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (0, 150, 0), 1)
+                cv2.polylines(self.img_debug, [inner_cp_t], True, color_t, 2 if is_t else 1)
+
+                # 畫全彩顏色圖 (改為 白色/灰色，並加黃色取樣點)
+                is_c = grid_color[r][c] == 1
+                inner_cp_c = self.get_cell_poly_sampling(pts1, r, c, 0.45, 0.55)
+                poly_full = self.get_cell_poly(pts1, r, c)
+                color_c = (255, 255, 255) if is_c else (150, 150, 150) # 白/灰
+                cv2.polylines(self.img_debug_color, [poly_full], True, color_c, 2 if is_c else 1)
+                cv2.fillPoly(self.img_debug_color, [inner_cp_c], (0, 255, 255)) # 黃色取樣點
+                
+        # 標示總偵測數量在圖片左上角
+        cv2.putText(self.img_debug, f"Total: {self.thresh_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.putText(self.img_debug_color, f"Total: {self.color_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
         cv2.polylines(self.img_debug_color, [pts1.astype(int)], True, (0, 255, 0), 3)
         return True
 
     def parse_piece_strict(self, mask, color_roi, pw, ph, unit, ox, oy):
         nz = cv2.findNonZero(mask)
-        if nz is None: return [[1]]
+        if nz is None: return [[1]], [[1]], 1, 1
         mx, my, mw, mh = cv2.boundingRect(nz)
         
         cols = max(1, min(5, int(round(mw / unit))))
@@ -172,12 +194,16 @@ class VisionEngine:
         grid_t = [[0]*cols for _ in range(rows)]
         grid_c = [[0]*cols for _ in range(rows)]
         
-        bg_mask = cv2.bitwise_not(mask[0:min(20, ph), 0:min(20, pw)])
-        bg_pixels = color_roi[0:min(20, ph), 0:min(20, pw)][bg_mask == 255]
+        # 修正：利用二值化反轉遮罩，提取「非方塊」的外部像素來算背景色，不怕方塊卡角落
+        bg_mask_full = cv2.bitwise_not(mask)
+        bg_pixels = color_roi[bg_mask_full == 255]
         if len(bg_pixels) > 0:
             bg_color = np.mean(bg_pixels, axis=0)
         else:
             bg_color = np.mean(color_roi[0:5, 0:5], axis=(0,1))
+            
+        sum_t = 0
+        sum_c = 0
             
         for r in range(rows):
             for c in range(cols):
@@ -193,7 +219,10 @@ class VisionEngine:
                     q = [roi[0:mid_h, 0:mid_w], roi[0:mid_h, mid_w:w], roi[mid_h:h, 0:mid_w], roi[mid_h:h, mid_w:w]]
                     def check(sub): return (cv2.countNonZero(sub)/sub.size > 0.01) if sub.size > 0 else False
                     is_p_t = all([check(sub) for sub in q])
-                grid_t[r][c] = 1 if is_p_t else 0
+                
+                if is_p_t:
+                    grid_t[r][c] = 1
+                    sum_t += 1
 
                 # --- 2. 顏色判定 ---
                 cx_s, cx_e = int(mx + (c + 0.45) * cw), int(mx + (c + 0.55) * cw)
@@ -205,38 +234,28 @@ class VisionEngine:
                 if patch.size > 0:
                     patch_mean = np.mean(patch, axis=(0,1))
                     dist = np.linalg.norm(patch_mean - bg_color)
-                    is_p_c = dist > 45
-                grid_c[r][c] = 1 if is_p_c else 0
+                    is_p_c = dist > 40 # 稍微下調距離容錯率，預防漏算
+                
+                if is_p_c:
+                    grid_c[r][c] = 1
+                    sum_c += 1
 
-        sum_t = sum(sum(row) for row in grid_t)
-        sum_c = sum(sum(row) for row in grid_c)
-        self.thresh_count += sum_t
-        self.color_count += sum_c
-
-        # 將兩種結果各自畫到對應的 Debug 圖上
-        for r in range(rows):
-            for c in range(cols):
-                # 畫二值化圖
-                is_p_t = grid_t[r][c]
-                rx_s, rx_e = int(mx + (c + 0.0) * cw), int(mx + (c + 1.0) * cw)
-                ry_s, ry_e = int(my + (r + 0.0) * ch), int(my + (r + 1.0) * ch)
+                # --- 繪圖區 ---
                 sx, sy, ex, ey = ox + rx_s, oy + ry_s, ox + rx_e, oy + ry_e
+                
+                # 畫二值化圖
                 color_t = (0, 0, 255) if is_p_t else (0, 0, 200)
                 cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), color_t, 2 if is_p_t else 1)
                 
-                # 畫全彩顏色圖
-                is_p_c = grid_c[r][c]
-                cx_s, cx_e = int(mx + (c + 0.45) * cw), int(mx + (c + 0.55) * cw)
-                cy_s, cy_e = int(my + (r + 0.45) * ch), int(my + (r + 0.55) * ch)
-                color_c = (0, 0, 255) if is_p_c else (0, 0, 200)
-                cv2.rectangle(self.img_debug_color, (ox+cx_s, oy+cy_s), (ox+max(cx_s+1, cx_e), oy+max(cy_s+1, cy_e)), color_c, 2 if is_p_c else 1)
+                # 畫全彩顏色圖 (修正：畫出整個方塊範圍，並改為白/灰)
+                color_c = (255, 255, 255) if is_p_c else (150, 150, 150)
+                cv2.rectangle(self.img_debug_color, (sx, sy), (ex, ey), color_c, 2 if is_p_c else 1)
+                # 畫中心取樣點 (黃色) 標示
+                cv2.rectangle(self.img_debug_color, (ox+cx_s, oy+cy_s), (ox+cx_e, oy+cy_e), (0, 255, 255), -1)
 
-        final_grid = grid_c if sum_c > sum_t else grid_t
-        return final_grid
+        return grid_t, grid_c, sum_t, sum_c
 
-# (下方保留原本的數學工具和 LogicSolver 即可)
-
-    # --- 數學工具 ---
+    # --- 數學工具 (保持不變) ---
     def lerp(self, p1, p2, t): return p1 + (p2 - p1) * t
     def get_p(self, pts, row, col):
         top = self.lerp(pts[0], pts[1], col/8.0); bot = self.lerp(pts[3], pts[2], col/8.0)
