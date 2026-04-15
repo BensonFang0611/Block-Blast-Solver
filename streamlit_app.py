@@ -71,6 +71,7 @@ def quick_log_to_sheets(msg):
         return True
     except:
         return False
+        return False
 
 # --- 1. UI 介面 ---
 st.title("🧩 Block Blast Solver Beta")
@@ -78,11 +79,9 @@ file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','hei
 
 if file:
     # --- A. 自動簽到邏輯 ---
-    if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != file.name:
-        with st.status("📡 自動同步紀錄中...", expanded=False):
-            if quick_log_to_sheets("Usage", "v"):
-                st.session_state.last_uploaded = file.name
-                st.toast("v", icon="✅")
+    if "last_logged_file" not in st.session_state or st.session_state.last_logged_file != file.name:
+        if quick_log_to_sheets("v"):
+            st.session_state.last_logged_file = file.name
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
