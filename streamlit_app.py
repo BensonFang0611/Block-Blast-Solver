@@ -137,7 +137,7 @@ if file:
 
     # --- 2. Feedback 反饋系統 (不論偵測成功與否均顯示) ---
     st.markdown("---")
-    st.subheader("🚩 Feedback 回饋系統")
+    st.subheader("🚩 Feedback 錯誤回報 ")
     with st.form("feedback_form"):
         msg = st.text_input("有什麼bug，或有想說的...")
         if st.form_submit_button("🚀 送出～ "):
