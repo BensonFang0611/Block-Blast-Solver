@@ -58,13 +58,12 @@ def upload_to_imgbb(file_path):
         return response.json()["data"]["url"]
 
 # --- 🛠️ 核心功能：簡易簽到至 Google Sheet ---
-def quick_log_to_sheets(action_type, note):
+def quick_log_to_sheets(msg):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         new_entry = pd.DataFrame([{
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "Action": action_type,
-            "Log": note
+            "Comment": msg
         }])
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
