@@ -5,29 +5,45 @@ from PIL import Image
 import os
 import requests
 import base64
+import pandas as pd
 from datetime import datetime
-from googleapiclient.discovery import build
-from google.oauth2 import service_account
+from streamlit_gsheets import GSheetsConnection
 from vision_engine import VisionEngine, LogicSolver
 
 # --- 🚀 核心配置 ---
-DOC_ID = "1XVra9GVl1eNbKZZM5WzsZDzZN-ibJD4JC6sgFemNQW0"
-IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9" 
+IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
+SHEET_NAME = "Sheet1" # 請確認你的 Google Sheet 分頁名稱
 
 # 顏色定義
 STEP_COLORS = [(0, 255, 255), (255, 100, 255), (100, 255, 100)]
 GRAY_ELIMINATED = (100, 100, 100)
 
-# --- 🛠️ 輔助功能 ---
-def draw_piece_preview(piece_grid):
-    u = 20
-    h, w = len(piece_grid), len(piece_grid[0])
-    canvas = np.zeros((h*u, w*u, 3), dtype=np.uint8) + 255
-    for r in range(h):
-        for c in range(w):
+# --- 🛠️ 輔助功能：繪製 5x5 預覽框 ---
+def draw_piece_preview_5x5(piece_grid):
+    grid_size = 5 # 固定為 5x5
+    u = 30        # 每個小格子的像素大小
+    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8) + 255 # 白色背景
+    
+    rows, cols = len(piece_grid), len(piece_grid[0])
+    
+    # 計算置中偏移量
+    offset_r = (grid_size - rows) // 2
+    offset_c = (grid_size - cols) // 2
+    
+    # 1. 繪製背景 5x5 淺灰色網格線
+    for i in range(grid_size + 1):
+        cv2.line(canvas, (0, i*u), (grid_size*u, i*u), (235, 235, 235), 1)
+        cv2.line(canvas, (i*u, 0), (i*u, grid_size*u), (235, 235, 235), 1)
+    
+    # 2. 繪製方塊本體
+    for r in range(rows):
+        for c in range(cols):
             if piece_grid[r][c]:
-                cv2.rectangle(canvas, (c*u, r*u), ((c+1)*u, (r+1)*u), (255, 120, 0), -1)
-            cv2.rectangle(canvas, (c*u, r*u), ((c+1)*u, (r+1)*u), (200, 200, 200), 1)
+                target_r, target_c = r + offset_r, c + offset_c
+                # 繪製方塊填充
+                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (255, 120, 0), -1)
+                # 繪製方塊邊框
+                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (180, 80, 0), 1)
     return canvas
 
 def upload_to_imgbb(file_path):
@@ -37,45 +53,20 @@ def upload_to_imgbb(file_path):
         response = requests.post("https://api.imgbb.com/1/upload", data=data)
         return response.json()["data"]["url"]
 
-def append_report_to_docs(issue, comment, img_url):
-    creds_info = st.secrets["connections"]["gsheets"]
-    creds = service_account.Credentials.from_service_account_info(
-        creds_info, 
-        scopes=["https://www.googleapis.com/auth/documents"]
-    )
-    service = build('docs', 'v1', credentials=creds)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    requests_body = [
-        {'insertText': {'location': {'index': 1}, 'text': f"\n--- 🚩 回報結束 ---\n\n"}},
-        {'insertInlineImage': {
-            'location': {'index': 1},
-            'uri': img_url,
-            'objectSize': {'width': {'magnitude': 400, 'unit': 'PT'}}
-        }},
-        {'insertText': {'location': {'index': 1}, 'text': f"\n回報時間：{timestamp}\n問題類型：{issue}\n補充說明：{comment}\n"}},
-        {'insertText': {'location': {'index': 1}, 'text': f"=== 新回報案例 ===\n"}}
-    ]
-    service.documents().batchUpdate(documentId=DOC_ID, body={'requests': requests_body}).execute()
-
 # --- 1. UI 介面 ---
 st.title("🧩 Block Blast Solver Beta")
-
-# 為了確保圖片能換，我們加入一個 unique 的 key
-file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'], key="game_image_uploader")
+file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'], key="game_uploader_pro")
 
 if file:
-    # 讀取圖片 (開發階段先不使用 @st.cache_resource 避免換圖失敗)
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
     eng = VisionEngine(cv_img)
     if eng.process():
-        # 嘗試求解
         sol = LogicSolver().solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         # --- 2. 解法展示 ---
-        st.header("💡 解法建議")
+        st.header("💡 最佳解法建議")
         if sol:
             step_options = [f"第 {i} 步" for i in range(len(sol) + 1)]
             selected_step_str = st.radio("步驟切換：", options=step_options, horizontal=True)
@@ -83,7 +74,6 @@ if file:
             
             base_canvas = eng.warp_orig.copy()
             u = 400 / 8
-            
             piece_canvas = np.zeros_like(base_canvas)
             elimination_canvas = np.zeros_like(base_canvas)
             
@@ -91,64 +81,68 @@ if file:
                 p_idx, row, col, cleared_rs, cleared_cs = sol[s]
                 p = eng.detected_pieces[p_idx]
                 color = STEP_COLORS[s % len(STEP_COLORS)]
-                
-                # 繪製方塊
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
                             rx, ry = int((col+pc)*u), int((row+pr)*u)
                             cv2.rectangle(piece_canvas, (rx, ry), (rx+int(u), ry+int(u)), color, -1)
-                
-                # 繪製消除行列
                 for cr in (cleared_rs or []):
                     cv2.rectangle(elimination_canvas, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
                 for cc in (cleared_cs or []):
                     cv2.rectangle(elimination_canvas, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
 
-            # 混合層次：讓灰色變成半透明，不要蓋死方塊顏色
+            # 疊層混合：灰色消除層改為 0.3 透明度
             combined_temp = piece_canvas.copy()
             elim_mask = cv2.cvtColor(elimination_canvas, cv2.COLOR_BGR2GRAY) > 0
             combined_temp[elim_mask] = cv2.addWeighted(elimination_canvas, 0.3, piece_canvas, 0.7, 0)[elim_mask]
-
+            
             data_mask = cv2.cvtColor(combined_temp, cv2.COLOR_BGR2GRAY) > 0
             base_canvas[data_mask] = cv2.addWeighted(combined_temp, 0.7, base_canvas, 0.3, 0)[data_mask]
             
-            # 使用 2026 新語法 width='stretch'
+            # 使用 2026 語法 width='stretch'
             st.image(base_canvas, channels="BGR", width='stretch')
         else:
-            st.warning("⚠️ 此盤面無解，請確認下方偵測是否正確。")
+            st.warning("⚠️ 此盤面無解，請檢查下方辨識是否正確。")
         
-        # --- 3. 待放物預覽 ---
+        # --- 3. 待放物預覽 (核心修改：並排 5x5 框) ---
+        st.header("📦 待放方塊 (5x5 視角)")
         p_cols = st.columns(3)
         for i, piece in enumerate(eng.detected_pieces):
-            with p_cols[i]:
-                st.image(draw_piece_preview(piece), caption=f"方塊 {i+1}", width='stretch')
+            if i < 3: # 確保只顯示前三個
+                with p_cols[i]:
+                    # 呼叫新的 5x5 繪圖函式
+                    p_img_5x5 = draw_piece_preview_5x5(piece)
+                    st.image(p_img_5x5, caption=f"方塊 {i+1}", width='stretch')
         
         # --- 4. Feedback 反饋系統 ---
         st.markdown("---")
-        st.subheader("🚩 判定不準？回傳報告優化 AI")
-
         with st.form("feedback_form"):
-            issue_type = st.selectbox("問題類型", ["定位歪掉", "方塊認錯", "格子認錯", "求解邏輯錯誤"])
-            msg = st.text_input("簡單補充說明 (選填)")
-            submit = st.form_submit_button("🚀 一鍵同步至 Google Docs")
+            msg = st.text_input("簡單補充說明")
+            submit = st.form_submit_button("🚀 同步數據至 Google Sheet")
             
             if submit:
                 try:
-                    with st.spinner("正在上傳並同步至雲端..."):
+                    with st.spinner("同步中..."):
                         os.makedirs("temp", exist_ok=True)
                         tmp_path = "temp/report_latest.jpg"
                         cv2.imwrite(tmp_path, eng.img_debug)
-                        
                         img_url = upload_to_imgbb(tmp_path)
-                        append_report_to_docs(issue_type, msg, img_url)
                         
-                        st.success("✅ 報告已送達 Google Docs！")
-                        st.link_button("📂 打開筆記本查看", f"https://docs.google.com/document/d/{DOC_ID}/edit")
+                        conn = st.connection("gsheets", type=GSheetsConnection)
+                        new_entry = pd.DataFrame([{
+                            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Comment": msg,
+                            "Image_Link": img_url,
+                            "Image_Preview": f'=IMAGE("{img_url}")'
+                        }])
+                        existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
+                        updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
+                        conn.update(worksheet=SHEET_NAME, data=updated_df)
+                        st.success("✅ 成功！圖片已自動存入表格預覽。")
                 except Exception as e:
-                    st.error(f"自動化流程失敗：{e}")
+                    st.error(f"同步失敗：{e}")
 
-        with st.expander("🛠️ 查看視覺辨識除錯圖"):
-            st.image(eng.img_debug, channels="BGR", caption="綠框: 網格定位 | 紅框: 偵測物", width='stretch')
+        with st.expander("🛠️ 視覺辨識分析 (Debug)"):
+            st.image(eng.img_debug, channels="BGR", width='stretch')
     else:
-        st.error("❌ 無法定位棋盤，請確保圖片包含完整遊戲邊框。")
+        st.error("❌ 無法定位棋盤，請確保截圖清晰且包含邊框。")
