@@ -7,6 +7,8 @@ import os
 import json
 from datetime import datetime
 from vision_engine import VisionEngine, LogicSolver
+from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
 register_heif_opener()
 
@@ -105,29 +107,41 @@ if file:
         st.subheader("🚩 判定不準？幫我優化程式")
 
         with st.form("feedback_form"):
+            issue_type = st.selectbox("發生什麼問題？", ["棋盤定位歪掉", "方塊形狀認錯", "格子沒認到", "求解邏輯錯誤"])
             comment = st.text_input("簡單補充說明 (選填)")
-            submit_feedback = st.form_submit_button("🚀 回傳錯誤數據至後台")
+            submit_feedback = st.form_submit_button("🚀 回傳錯誤數據至 Google Sheets")
             
             if submit_feedback:
-                # 建立報告資料夾
-                os.makedirs("reports", exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                report_id = f"report_{timestamp}"
-                
-                # 儲存圖片
-                raw_pil_img.save(f"reports/{report_id}_raw.jpg")
-                cv2.imwrite(f"reports/{report_id}_debug.jpg", eng.img_debug)
-                
-                # 儲存辨識數據
-                meta_data = {
-                    "comment": comment,
-                    "grid_state": eng.grid_state,
-                    "pieces": eng.detected_pieces
-                }
-                with open(f"reports/{report_id}_data.json", "w") as f:
-                    json.dump(meta_data, f)
-                
-                st.success(f"感謝回報！數據已存檔 (ID: {report_id})。這將幫助我改進算法。")
+                try:
+                    # 建立連線
+                    conn = st.connection("gsheets", type=GSheetsConnection)
+                    
+                    # 1. 準備新資料
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    report_id = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    
+                    new_entry = pd.DataFrame([{
+                        "Timestamp": timestamp,
+                        "Issue_Type": issue_type,
+                        "Comment": comment,
+                        "Report_ID": report_id
+                    }])
+
+                    # 2. 讀取現有資料
+                    # 假設你的分頁名稱是 Sheet1
+                    existing_data = conn.read(worksheet="Sheet1", ttl=0) # ttl=0 確保抓到最新資料
+                    
+                    # 3. 合併並更新
+                    updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
+                    conn.update(worksheet="Sheet1", data=updated_df)
+
+                    # 4. 圖片暫時還是存本地伺服器 (若重啟會消失，建議先手動下載)
+                    os.makedirs("reports", exist_ok=True)
+                    raw_pil_img.save(f"reports/{report_id}_raw.jpg")
+
+                    st.success(f"✅ 資料已存入 Google Sheets！(ID: {report_id})")
+                except Exception as e:
+                    st.error(f"儲存失敗，請檢查 Secrets 設定或 Sheet 權限：{e}")
 
         # --- 4. 全域除錯分析 ---
         with st.expander("🛠️ 點開查看視覺辨識除錯圖"):
