@@ -42,7 +42,7 @@ def draw_piece_preview_5x5(piece_grid):
                 cv2.rectangle(canvas, ((c+c_off)*u, (r+r_off)*u), ((c+c_off+1)*u, (r+r_off+1)*u), (0, 80, 100), 1)
     return canvas
 
-st.title("🧩 Block Blast Solver (Color Logic)")
+st.title("🧩 Block Blast Solver")
 file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'])
 
 if file:
