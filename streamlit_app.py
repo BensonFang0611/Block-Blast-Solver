@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 from vision_engine import VisionEngine, LogicSolver
+from datetime import datetime, timedelta, timezone
 
 # --- 🚀 核心配置 ---
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
@@ -61,8 +62,10 @@ def upload_to_imgbb(file_path):
 def quick_log_to_sheets(msg):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
+        tz = timezone(timedelta(hours=8)) 
+        now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         new_entry = pd.DataFrame([{
-            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Timestamp": now_tw,
             "Comment": msg
         }])
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
@@ -152,8 +155,10 @@ if file:
                     
                     img_url = upload_to_imgbb(tmp_path)
                     conn = st.connection("gsheets", type=GSheetsConnection)
+                    tz = timezone(timedelta(hours=8)) 
+                    now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
                     new_entry = pd.DataFrame([{
-                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Timestamp": now_tw,
                         "Comment": msg, 
                         "Image_Link": img_url
                     }])
