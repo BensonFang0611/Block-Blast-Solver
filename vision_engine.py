@@ -238,3 +238,46 @@ class VisionEngine:
         s = pts.sum(axis=1); rect[0], rect[2] = pts[np.argmin(s)], pts[np.argmax(s)]
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
+        
+class LogicSolver:
+    def solve(self, grid, pieces, p_indices, path=[]):
+        if not p_indices: return path
+        for i in p_indices:
+            p = pieces[i]
+            for r in range(8):
+                for c in range(8):
+                    if self.can_place(grid, p, r, c):
+                        placed = self.place_only(grid, p, r, c)
+                        rows, cols = self.get_cleared(placed)
+                        next_g = self.simulate(grid, p, r, c)
+                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], path + [(i, r, c, rows, cols)])
+                        if res: return res
+        return None
+
+    def can_place(self, grid, p, r, c):
+        for pr in range(len(p)):
+            for pc in range(len(p[0])):
+                if p[pr][pc] == 1:
+                    tr, tc = r + pr, c + pc
+                    if tr < 0 or tr >= 8 or tc < 0 or tc >= 8 or grid[tr][tc] == 1: return False
+        return True
+
+    def place_only(self, grid, p, r, c):
+        ng = copy.deepcopy(grid)
+        for pr in range(len(p)):
+            for pc in range(len(p[0])):
+                if p[pr][pc] == 1: ng[r+pr][c+pc] = 1
+        return ng
+
+    def get_cleared(self, grid):
+        rs = [i for i, row in enumerate(grid) if all(row)]
+        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
+        return rs, cs
+
+    def simulate(self, grid, p, r, c):
+        ng = self.place_only(grid, p, r, c)
+        rs, cs = self.get_cleared(ng)
+        for i in rs: ng[i] = [0]*8
+        for j in cs: 
+            for i in range(8): ng[i][j] = 0
+        return ng
