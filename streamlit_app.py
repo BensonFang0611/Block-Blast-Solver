@@ -130,7 +130,7 @@ if file:
         st.markdown("---")
         with st.form("feedback_form"):
             msg = st.text_input("有什麼bug，或有想說的...")
-            if st.form_submit_button("🚀 小飛車來嘍～"):
+            if st.form_submit_button("🚀 送出～ "):
                 try:
                     with st.spinner("同步中..."):
                         os.makedirs("temp", exist_ok=True)
