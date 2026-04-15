@@ -22,7 +22,7 @@ GRAY_ELIMINATED = (100, 100, 100)
 def draw_piece_preview_5x5(piece_grid):
     grid_size = 5 # 固定為 5x5
     u = 30        # 每個小格子的像素大小
-    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8) + 255 # 白色背景
+    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8) + 0 # 白色背景
     
     rows, cols = len(piece_grid), len(piece_grid[0])
     
@@ -41,9 +41,9 @@ def draw_piece_preview_5x5(piece_grid):
             if piece_grid[r][c]:
                 target_r, target_c = r + offset_r, c + offset_c
                 # 繪製方塊填充
-                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (255, 120, 0), -1)
+                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (0, 160, 200), -1)
                 # 繪製方塊邊框
-                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (180, 80, 0), 1)
+                cv2.rectangle(canvas, (target_c*u, target_r*u), ((target_c+1)*u, (target_r+1)*u), (0, 80, 100), 1)
     return canvas
 
 def upload_to_imgbb(file_path):
@@ -105,7 +105,6 @@ if file:
             st.warning("⚠️ 此盤面無解，請檢查下方辨識是否正確。")
         
         # --- 3. 待放物預覽 (核心修改：並排 5x5 框) ---
-        st.header("📦 待放方塊 (5x5 視角)")
         p_cols = st.columns(3)
         for i, piece in enumerate(eng.detected_pieces):
             if i < 3: # 確保只顯示前三個
@@ -133,7 +132,6 @@ if file:
                             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "Comment": msg,
                             "Image_Link": img_url,
-                            "Image_Preview": f'=IMAGE("{img_url}")'
                         }])
                         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
                         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
