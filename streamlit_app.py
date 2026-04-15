@@ -14,14 +14,28 @@ from vision_engine import VisionEngine, LogicSolver
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
 SHEET_NAME = "Sheet1" 
 
-# 步驟顏色 (BGR 格式)
-STEP_COLORS = [(0, 255, 255), (255, 100, 255), (100, 255, 100)] 
-GRAY_ELIMINATED = (80, 80, 80) # 消除後的半透明灰色
+# 顏色定義 (BGR)
+STEP_COLORS = [(0, 255, 255), (255, 100, 255), (100, 255, 100)] # 亮青、亮粉、亮綠
+GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能 ---
+# --- 🛠️ 輔助功能 1：繪製 5x5 預覽圖 ---
+def draw_piece_preview_5x5(piece_grid):
+    u = 30
+    canvas = np.zeros((150, 150, 3), dtype=np.uint8)
+    r_off = (5 - len(piece_grid)) // 2
+    c_off = (5 - len(piece_grid[0])) // 2
+    for r in range(len(piece_grid)):
+        for c in range(len(piece_grid[0])):
+            if piece_grid[r][c]:
+                # 繪製方塊與內縮邊框
+                x1, y1 = (c + c_off) * u, (r + r_off) * u
+                x2, y2 = x1 + u, y1 + u
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 160, 200), -1)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 80, 100), 1)
+    return canvas
 
+# --- 🛠️ 輔助功能 2：圖片上傳 ImgBB ---
 def upload_to_imgbb(file_path):
-    """上傳圖片到 ImgBB 並回傳網址"""
     try:
         with open(file_path, "rb") as file:
             img_base64 = base64.b64encode(file.read())
@@ -29,12 +43,12 @@ def upload_to_imgbb(file_path):
             response = requests.post("https://api.imgbb.com/1/upload", data=data)
             if response.status_code == 200:
                 return response.json()["data"]["url"]
-        return "Upload Failed"
+        return "Upload Error"
     except:
-        return "Error"
+        return "Upload Failed"
 
+# --- 🛠️ 輔助功能 3：紀錄到 Google Sheets (包含 User Visit) ---
 def log_to_sheets(msg, img_url="None"):
-    """將紀錄同步至 Google Sheets"""
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8)) 
@@ -44,148 +58,106 @@ def log_to_sheets(msg, img_url="None"):
             "Comment": msg,
             "Image_Link": img_url
         }])
+        # 讀取並合併
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=updated_df)
         return True
-    except:
+    except Exception as e:
+        st.error(f"Sheet Error: {e}")
         return False
 
-def draw_piece_preview_5x5(piece_grid):
-    """繪製 5x5 的待放方塊預覽圖"""
-    u = 30
-    canvas = np.zeros((150, 150, 3), dtype=np.uint8)
-    r_off, c_off = (5 - len(piece_grid)) // 2, (5 - len(piece_grid[0])) // 2
-    for r in range(len(piece_grid)):
-        for c in range(len(piece_grid[0])):
-            if piece_grid[r][c]:
-                # 畫方塊與邊框
-                cv2.rectangle(canvas, ((c+c_off)*u, (r+r_off)*u), ((c+c_off+1)*u, (r+r_off+1)*u), (0, 160, 200), -1)
-                cv2.rectangle(canvas, ((c+c_off)*u, (r+r_off)*u), ((c+c_off+1)*u, (r+r_off+1)*u), (0, 80, 100), 1)
-    return canvas
+# --- 1. UI 介面 ---
+st.set_page_config(page_title="Block Blast Solver", layout="centered")
+st.title("🧩 Block Blast Solver (Color + Grid)")
 
-# --- 1. UI 介面設定 ---
-st.set_page_config(page_title="Block Blast Color Solver", layout="centered")
-
-# --- 訪客長駐提示 (側邊欄) ---
-with st.sidebar:
-    st.title("使用指南 📖")
-    st.info("""
-    1. 截圖時請包含完整遊戲畫面。
-    2. 確保三個待放方塊清晰可見。
-    3. 如果辨識錯誤，請點擊下方回饋。
-    """)
-    st.write("---")
-    st.write("v2.5 純顏色辨識版")
-
-st.title("🧩 Block Blast Solver")
-
-# --- 訪客進場歡迎提示 ---
-if "welcome_hint" not in st.session_state:
-    st.toast("👋 歡迎回來！上傳截圖即可開始解題。")
-    st.session_state.welcome_hint = True
-
-file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'])
+file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
-    # A. 自動訪客簽到邏輯
-    if "last_logged_file" not in st.session_state or st.session_state.last_logged_file != file.name:
-        if log_to_sheets("Visitor Uploaded File"):
-            st.session_state.last_logged_file = file.name
-            st.toast("✅ 圖片已成功接收，正在分析顏色...")
+    # ✨ 關鍵功能：User Visit 簽到機制
+    if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
+        if log_to_sheets("User Visit"):
+            st.session_state.logged_file = file.name
 
+    # 讀取影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
-    # 初始化辨識引擎
+    # 辨識引擎
     eng = VisionEngine(cv_img)
-    
-    with st.spinner("辨識引擎運作中..."):
-        is_detected = eng.process()
-
-    if is_detected:
-        # --- B. 顯示解法建議 ---
+    if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         if sol:
-            # 訪客提示：步驟切換
-            st.success("🎉 已找到最佳路徑！請切換下方步驟觀看。")
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
-            current_step = int(step_label.split(' ')[1])
+            idx = int(step_label.split(' ')[1])
             
-            # 繪製解法
-            base_canvas = eng.warp_orig.copy()
+            # --- 繪製解法示意圖 ---
+            canvas = eng.warp_orig.copy()
             u = 400 / 8
             
-            for s in range(current_step):
+            for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
-                # 繪製方塊 + 黑色格線
+                # ✨ 繪製方塊本體與格線 (Border)
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
                             x1, y1 = int((col+pc)*u), int((row+pr)*u)
                             x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                            cv2.rectangle(base_canvas, (x1, y1), (x2, y2), color, -1)
-                            cv2.rectangle(base_canvas, (x1, y1), (x2, y2), (0, 0, 0), 1) # 加入格線
+                            # 填滿顏色
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
+                            # 加上黑色邊框 (格線)
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
 
-                # 繪製消除特效
-                overlay = base_canvas.copy()
-                for cr in (cl_rs or []): cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-                for cc in (cl_cs or []): cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                cv2.addWeighted(overlay, 0.4, base_canvas, 0.6, 0, base_canvas)
+                # 繪製消除效果 (半透明融合)
+                overlay = canvas.copy()
+                for cr in (cl_rs or []):
+                    cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+                for cc in (cl_cs or []):
+                    cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                # 融合消除層
+                cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
             
-            st.image(base_canvas, channels="BGR", use_container_width=True)
+            st.image(canvas, channels="BGR", use_container_width=True)
         else:
-            st.warning("⚠️ 此盤面無解。這可能是辨識誤差造成的，請檢查下方 Debug 圖。")
-        
-        # --- C. 待放方塊預覽 ---
+            st.warning("⚠️ 此盤面在目前的辨識結果下無解。")
+
+        # 待放方塊預覽
         st.markdown("---")
         st.subheader("📦 偵測到的方塊")
         p_cols = st.columns(3)
-        for idx, piece in enumerate(eng.detected_pieces):
-            piece_img = draw_piece_preview_5x5(piece)
-            p_cols[idx].image(piece_img, channels="BGR", use_container_width=True)
+        for i, piece in enumerate(eng.detected_pieces):
+            p_cols[i].image(draw_piece_preview_5x5(piece), channels="BGR", use_container_width=True)
 
-        # --- D. Debug 詳細資訊 ---
-        with st.expander("🛠️ 辨識細節 (訪客 Debug 模式)"):
-            st.write("白色小點：偵測為方塊 | 灰色小點：偵測為空位")
+        # Debug 資訊
+        with st.expander("🛠️ 查看辨識細節 (Debug View)"):
+            st.write("白色 = 方塊 | 灰色 = 空位 | 左上圓點 = 背景顏色採樣參考")
             st.image(eng.img_debug, channels="BGR", use_container_width=True)
-
     else:
-        st.error("❌ 無法定位棋盤。請確認截圖是否完整，且沒有被手機的導航欄遮擋。")
+        st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
 
     # --- 2. Feedback 回饋系統 ---
     st.markdown("---")
-    st.subheader("🚩 錯誤回報與建議")
+    st.subheader("🚩 Feedback 錯誤回報")
     with st.form("feedback_form"):
-        user_msg = st.text_input("如果有辨識錯誤或想說的話...", placeholder="例如：第三個方塊辨識錯了...")
-        submit_btn = st.form_submit_button("🚀 送出回饋")
-        
-        if submit_btn:
-            if user_msg.strip() == "":
-                st.warning("請輸入一些內容再送出唷！")
-            else:
-                with st.spinner("回饋同步中..."):
-                    img_path = "debug_report.jpg"
-                    # 有辨識圖就傳辨識圖，沒辨識成功就傳原始圖
-                    cv2.imwrite(img_path, eng.img_debug if is_detected else cv_img)
-                    
-                    url = upload_to_imgbb(img_path)
-                    log_to_sheets(f"Feedback: {user_msg}", url)
-                    st.success("✅ 已收到回報！謝謝你幫助我們變得更好。")
-                    st.toast("感謝回饋！💖")
+        msg = st.text_input("如果有辨識錯誤，請告訴我們（例如：第2個方塊辨識錯了）")
+        if st.form_submit_button("🚀 送出回報"):
+            with st.spinner("同步中..."):
+                os.makedirs("temp", exist_ok=True)
+                report_path = "temp/feedback.jpg"
+                # 優先上傳 Debug 圖以便排錯
+                cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
+                
+                url = upload_to_imgbb(report_path)
+                if log_to_sheets(msg, url):
+                    st.success("✅ 感謝您的回饋！我們將根據這張圖片進行優化。")
 
-else:
-    # --- 尚未上傳圖片時的提示 ---
-    st.info("💡 訪客提示：請上傳遊戲截圖以獲得解法建議。")
-
-# 頁尾
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-    Block Blast Solver v2.5 | 使用顏色感知技術
+    Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
 </div>
 """, unsafe_allow_html=True)
