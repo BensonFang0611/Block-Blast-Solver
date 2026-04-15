@@ -88,7 +88,7 @@ if file:
         sol = LogicSolver().solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         # --- 2. 解法展示 ---
-        st.header("💡 最佳解法建議")
+        st.header("💡 解法建議")
         if sol:
             step_options = [f"第 {i} 步" for i in range(len(sol) + 1)]
             selected_step_str = st.radio("步驟切換：", options=step_options, horizontal=True)
