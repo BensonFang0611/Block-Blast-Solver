@@ -22,7 +22,7 @@ GRAY_ELIMINATED = (100, 100, 100)
 def draw_piece_preview_5x5(piece_grid):
     grid_size = 5 # 固定為 5x5
     u = 30        # 每個小格子的像素大小
-    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8) + 0 # 白色背景
+    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8) + 0
     
     rows, cols = len(piece_grid), len(piece_grid[0])
     
@@ -116,8 +116,8 @@ if file:
         # --- 4. Feedback 反饋系統 ---
         st.markdown("---")
         with st.form("feedback_form"):
-            msg = st.text_input("簡單補充說明")
-            submit = st.form_submit_button("🚀 同步數據至 Google Sheet")
+            msg = st.text_input("有bug?或想對作者說的話")
+            submit = st.form_submit_button("🚀 同步數據至雲端")
             
             if submit:
                 try:
@@ -136,7 +136,7 @@ if file:
                         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
                         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
                         conn.update(worksheet=SHEET_NAME, data=updated_df)
-                        st.success("✅ 成功！圖片已自動存入表格預覽。")
+                        st.success("✅ 成功！感謝你的回饋。")
                 except Exception as e:
                     st.error(f"同步失敗：{e}")
 
