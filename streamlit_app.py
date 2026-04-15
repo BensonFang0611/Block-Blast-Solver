@@ -15,7 +15,7 @@ IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
 SHEET_NAME = "Sheet1" 
 
 # 顏色定義 (BGR)
-STEP_COLORS = [(0, 255, 255), (255, 100, 255), (100, 255, 100)] # 亮青、亮粉、亮綠
+STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
 # --- 🛠️ 輔助功能 1：繪製 5x5 預覽圖 ---
@@ -69,7 +69,7 @@ def log_to_sheets(msg, img_url="None"):
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver (Color + Grid)")
+st.title("🧩 Block Blast Solver ")
 
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
@@ -124,19 +124,18 @@ if file:
             
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
-            st.warning("⚠️ 此盤面在目前的辨識結果下無解。")
+            st.warning("此盤面無解:..)")
 
         # 待放方塊預覽
         st.markdown("---")
-        st.subheader("📦 偵測到的方塊")
         p_cols = st.columns(3)
         for i, piece in enumerate(eng.detected_pieces):
             p_cols[i].image(draw_piece_preview_5x5(piece), channels="BGR", use_container_width=True)
 
         # Debug 資訊
-        with st.expander("🛠️ 查看辨識細節 (Debug View)"):
-            st.write("白色 = 方塊 | 灰色 = 空位 | 左上圓點 = 背景顏色採樣參考")
-            st.image(eng.img_debug, channels="BGR", use_container_width=True)
+        #with st.expander("🛠️ Debug"):
+        #    st.write("白色 = 方塊 | 灰色 = 空位 | 左上圓點 = 背景顏色採樣參考")
+        #    st.image(eng.img_debug, channels="BGR", use_container_width=True)
     else:
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
 
@@ -144,8 +143,8 @@ if file:
     st.markdown("---")
     st.subheader("🚩 Feedback 錯誤回報")
     with st.form("feedback_form"):
-        msg = st.text_input("如果有辨識錯誤，請告訴我們（例如：第2個方塊辨識錯了）")
-        if st.form_submit_button("🚀 送出回報"):
+        msg = st.text_input("如果有辨識錯誤，請告訴我!!")
+        if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
                 os.makedirs("temp", exist_ok=True)
                 report_path = "temp/feedback.jpg"
@@ -154,7 +153,7 @@ if file:
                 
                 url = upload_to_imgbb(report_path)
                 if log_to_sheets(msg, url):
-                    st.success("✅ 感謝您的回饋！我們將根據這張圖片進行優化。")
+                    st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
 st.markdown("""
 <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
