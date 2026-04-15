@@ -18,23 +18,48 @@ SHEET_NAME = "Sheet1"
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能 1：繪製 5x5 預覽圖 ---
+# --- 🛠️ 輔助功能 1：繪製 5x5 深藍色風格方塊 ---
 def draw_piece_preview_5x5(piece_grid):
-    u = 30
-    canvas = np.zeros((150, 150, 3), dtype=np.uint8)
-    r_off = (5 - len(piece_grid)) // 2
-    c_off = (5 - len(piece_grid[0])) // 2
-    for r in range(len(piece_grid)):
-        for c in range(len(piece_grid[0])):
+    grid_size, u = 5, 40
+    # 畫布背景為純黑，營造深色質感
+    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8)
+    rows, cols = len(piece_grid), len(piece_grid[0])
+    offset_r, offset_c = (grid_size - rows) // 2, (grid_size - cols) // 2
+    
+    # 畫背景細格線 (深灰色)
+    for i in range(grid_size + 1):
+        cv2.line(canvas, (0, i*u), (grid_size*u, i*u), (40, 40, 40), 1)
+        cv2.line(canvas, (i*u, 0), (i*u, grid_size*u), (40, 40, 40), 1)
+        
+    for r in range(rows):
+        for c in range(cols):
             if piece_grid[r][c]:
-                # 繪製方塊與內縮邊框
-                x1, y1 = (c + c_off) * u, (r + r_off) * u
-                x2, y2 = x1 + u, y1 + u
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 160, 200), -1)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 80, 100), 1)
+                tr, tc = r + offset_r, c + offset_c
+                # 深藍色填充 (0, 160, 200)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 160, 200), -1)
+                # 較深的藍色邊框 (0, 80, 100)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 80, 100), 1)
     return canvas
 
-# --- 🛠️ 輔助功能 2：圖片上傳 ImgBB ---
+# --- 🛠️ 輔助功能 2：水平縫合待放方塊 ---
+def get_combined_pieces_image(detected_pieces):
+    if not detected_pieces: return None
+    piece_imgs = [draw_piece_preview_5x5(p) for p in detected_pieces[:3]]
+    
+    h, w, c = piece_imgs[0].shape
+    gap_width = 15
+    # 縫合間隙 (黑色)
+    black_gap = np.zeros((h, gap_width, c), dtype=np.uint8)
+    
+    stack_list = []
+    for i, img in enumerate(piece_imgs):
+        stack_list.append(img)
+        if i < len(piece_imgs) - 1:
+            stack_list.append(black_gap)
+            
+    return np.hstack(stack_list)
+
+# --- 🛠️ 輔助功能 3：圖片上傳 ImgBB ---
 def upload_to_imgbb(file_path):
     try:
         with open(file_path, "rb") as file:
@@ -47,7 +72,7 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 3：紀錄到 Google Sheets (包含 User Visit) ---
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets (包含 User Visit) ---
 def log_to_sheets(msg, img_url="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -128,10 +153,10 @@ if file:
 
         # 待放方塊預覽
         st.markdown("---")
-        p_cols = st.columns(3)
-        for i, piece in enumerate(eng.detected_pieces):
-            p_cols[i].image(draw_piece_preview_5x5(piece), channels="BGR", use_container_width=True)
-
+        combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
+        if combined_piece_img is not None:
+            st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
+        
         # Debug 資訊
         #with st.expander("🛠️ Debug"):
         #    st.write("白色 = 方塊 | 灰色 = 空位 | 左上圓點 = 背景顏色採樣參考")
