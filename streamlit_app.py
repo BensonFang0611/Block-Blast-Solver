@@ -57,11 +57,33 @@ def upload_to_imgbb(file_path):
         response = requests.post("https://api.imgbb.com/1/upload", data=data)
         return response.json()["data"]["url"]
 
+# --- 🛠️ 核心功能：簡易簽到至 Google Sheet ---
+def quick_log_to_sheets(action_type, note):
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        new_entry = pd.DataFrame([{
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Action": action_type,
+            "Log": note
+        }])
+        existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
+        updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
+        conn.update(worksheet=SHEET_NAME, data=updated_df)
+        return True
+    except:
+        return False
+
 # --- 1. UI 介面 ---
 st.title("🧩 Block Blast Solver Beta")
 file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'], key="uploader_final")
 
 if file:
+    # --- A. 自動簽到邏輯 ---
+    if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != file.name:
+        with st.status("📡 自動同步紀錄中...", expanded=False):
+            if quick_log_to_sheets("Usage", "v"):
+                st.session_state.last_uploaded = file.name
+                st.toast("v", icon="✅")
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
