@@ -11,8 +11,8 @@ from vision_engine import VisionEngine, LogicSolver
 # --- 🚀 配置 ---
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
 SHEET_NAME = "Sheet1"
-STEP_COLORS = [(0, 255, 255), (255, 100, 255), (100, 255, 100)] # 亮青、亮粉、亮綠
-GRAY_ELIMINATED = (80, 80, 80) # 消除後的顏色
+STEP_COLORS = [(200, 200, 0), (200, 100, 200), (100, 200, 100)] # 亮青、亮粉、亮綠
+GRAY_ELIMINATED = (100, 100, 100) # 消除後的顏色
 
 def upload_to_imgbb(file_path):
     with open(file_path, "rb") as file:
