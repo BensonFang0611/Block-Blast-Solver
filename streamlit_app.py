@@ -148,21 +148,21 @@ if file:
         with st.expander("🛠️ (Debug)"):
             st.image(eng.img_debug, channels="BGR", width='stretch')
     else: st.error("❌ 無法定位棋盤。")
-# --- 4. Feedback 反饋系統 ---
-st.markdown("---")
-with st.form("feedback_form"):
-    msg = st.text_input("有什麼bug，或有想說的...")
-    if st.form_submit_button("🚀 送出～ "):
-        try:
-            with st.spinner("同步中..."):
-                os.makedirs("temp", exist_ok=True)
-                tmp_path = "temp/report_latest.jpg"
-                cv2.imwrite(tmp_path, eng.img_debug)
-                img_url = upload_to_imgbb(tmp_path)
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                new_entry = pd.DataFrame([{"Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Comment": msg, "Image_Link": img_url}])
-                existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
-                conn.update(worksheet=SHEET_NAME, data=pd.concat([existing_data, new_entry], ignore_index=True))
-                st.success(f"✅ 成功上傳！謝謝你的回饋，你的一小步將會成為人類的一大步！！")
-        except Exception as e: st.error(f"同步失敗：{e}")
+        # --- 4. Feedback 反饋系統 ---
+        st.markdown("---")
+        with st.form("feedback_form"):
+            msg = st.text_input("有什麼bug，或有想說的...")
+            if st.form_submit_button("🚀 送出～ "):
+                try:
+                    with st.spinner("同步中..."):
+                        os.makedirs("temp", exist_ok=True)
+                        tmp_path = "temp/report_latest.jpg"
+                        cv2.imwrite(tmp_path, eng.img_debug)
+                        img_url = upload_to_imgbb(tmp_path)
+                        conn = st.connection("gsheets", type=GSheetsConnection)
+                        new_entry = pd.DataFrame([{"Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Comment": msg, "Image_Link": img_url}])
+                        existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
+                        conn.update(worksheet=SHEET_NAME, data=pd.concat([existing_data, new_entry], ignore_index=True))
+                        st.success(f"✅ 成功上傳！謝謝你的回饋，你的一小步將會成為人類的一大步！！")
+                except Exception as e: st.error(f"同步失敗：{e}")
