@@ -15,7 +15,7 @@ from vision_engine import VisionEngine, LogicSolver
 register_heif_opener()
 
 # --- 配置區 (請填寫你的 Google Drive 資料夾 ID) ---
-DRIVE_FOLDER_ID = "你的_GOOGLE_DRIVE_資料夾_ID"
+DRIVE_FOLDER_ID = "BlockBlast_Solver"
 
 st.set_page_config(page_title="Block Blast Solver Beta", layout="wide")
 
