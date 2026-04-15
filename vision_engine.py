@@ -5,160 +5,130 @@ import copy
 class VisionEngine:
     def __init__(self, cv_img):
         self.img_orig = cv_img
-        self.img_debug = None           # 舊版二值化 Debug 圖
-        self.img_debug_color = None     # 新版全彩顏色 Debug 圖
+        self.img_debug = None           # 僅保留彩色 Debug 圖
         self.grid_state = [[0]*8 for _ in range(8)]
         self.detected_pieces = []
         self.warp_orig = None
         self.piece_scale = 0.50 
-        
-        # 統計數據
-        self.thresh_count = 0
-        self.color_count = 0
-        self.chosen_method = ""
 
     def process(self):
-        # 1. 影像預處理
+        # 1. 預處理（僅用於定位棋盤與方塊輪廓）
         gray = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
         
-        self.img_debug = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
-        self.img_debug_color = self.img_orig.copy()
+        self.img_debug = self.img_orig.copy()
 
-        # 2. 智慧定位棋盤
-        cnts, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if not cnts or hierarchy is None: return False
+        # 2. 定位棋盤
+        cnts, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts: return False
         
-        hierarchy = hierarchy[0]
         candidates = []
-        for i, cnt in enumerate(cnts):
+        for cnt in cnts:
             area = cv2.contourArea(cnt)
             if area < (gray.shape[0] * gray.shape[1] * 0.1): continue
             approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
             if len(approx) == 4:
-                candidates.append({'index': i, 'area': area, 'approx': approx})
+                candidates.append({'area': area, 'approx': approx})
         
         if not candidates: return False
-        candidates = sorted(candidates, key=lambda x: x['area'], reverse=True)
-        best_cand = candidates[0]
-        for cand in candidates[1:]:
-            if cand['area'] > best_cand['area'] * 0.80: best_cand = cand
-        
-        approx = best_cand['approx']
-        pts1 = self.order_points(approx.reshape(4, 2))
+        best_cand = sorted(candidates, key=lambda x: x['area'], reverse=True)[0]
+        pts1 = self.order_points(best_cand['approx'].reshape(4, 2))
         orig_unit = np.linalg.norm(pts1[0] - pts1[1]) / 8.0 
         
         M = cv2.getPerspectiveTransform(pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
-        warp_loc = cv2.warpPerspective(thresh, M, (400, 400))
-        warp_color = cv2.warpPerspective(self.img_orig, M, (400, 400))
+        warp_color = self.warp_orig # 使用透視後的彩色圖進行 8x8 判定
         
-        # 3. 棋盤底色採樣 (8x8 區域)
+        # 3. 採樣 8x8 棋盤底色並判定
         u = 400 / 8
         centers_color = []
         for r in range(8):
             for c in range(8):
                 cx, cy = int((c + 0.5) * u), int((r + 0.5) * u)
-                roi_c = warp_color[cy-2:cy+2, cx-2:cx+2]
-                centers_color.append(np.median(roi_c, axis=(0, 1)) if roi_c.size > 0 else [0,0,0])
+                roi = warp_color[cy-2:cy+2, cx-2:cx+2]
+                centers_color.append(np.median(roi, axis=(0, 1)) if roi.size > 0 else [0,0,0])
 
-        color_counts = {}
+        # 統計棋盤出現最多次的顏色作為底色
+        color_bins = {}
         for mc in centers_color:
             q = (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20))
-            color_counts[q] = color_counts.get(q, 0) + 1
-        bg_q = max(color_counts, key=color_counts.get)
-        board_bg_color = np.mean([mc for mc in centers_color if (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20)) == bg_q], axis=0)
+            color_bins[q] = color_bins.get(q, 0) + 1
+        board_bg_q = max(color_bins, key=color_bins.get)
+        board_bg_rgb = np.mean([mc for mc in centers_color if (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20)) == board_bg_q], axis=0)
 
-        # 4. 棋盤狀態判定
-        grid_thresh = [[0]*8 for _ in range(8)]
-        grid_color = [[0]*8 for _ in range(8)]
-        s_bt, s_bc = 0, 0
         for r in range(8):
             for c in range(8):
-                if cv2.countNonZero(warp_loc[int((r+0.15)*u):int((r+0.85)*u), int((c+0.15)*u):int((c+0.85)*u)]) / (0.7*u)**2 > 0.01:
-                    grid_thresh[r][c] = 1; s_bt += 1
-                if np.linalg.norm(centers_color[r*8+c] - board_bg_color) > 45:
-                    grid_color[r][c] = 1; s_bc += 1
+                dist = np.linalg.norm(centers_color[r*8+c] - board_bg_rgb)
+                is_p = dist > 45
+                self.grid_state[r][c] = 1 if is_p else 0
+                
+                # 繪製 8x8 Debug：白色小方塊(有), 灰色(無)
+                cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (80,80,80), 1)
+                color_fill = (255,255,255) if is_p else (120,120,120)
+                cv2.fillPoly(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.4, 0.6)], color_fill)
 
-        # ====== 🌟 待放物全域背景色採樣邏輯 ======
+        # 4. 採樣全域待放區背景色
         img_h = self.img_orig.shape[0]
         bottom_y = int(max(pts1[:, 1]))
-        start_y, end_y = bottom_y + 40, int(img_h * 0.88)
-        piece_area_mask = thresh[start_y:end_y, :]
-        piece_area_color = self.img_orig[start_y:end_y, :]
+        ay_s, ay_e = bottom_y + 40, int(img_h * 0.88)
+        piece_area_mask = thresh[ay_s:ay_e, :]
+        piece_area_color = self.img_orig[ay_s:ay_e, :]
         
-        # 腐蝕遮罩以獲取純淨背景
         bg_mask = cv2.bitwise_not(piece_area_mask)
         bg_mask = cv2.erode(bg_mask, np.ones((5,5), np.uint8), iterations=2)
         bg_pixels = piece_area_color[bg_mask == 255]
         global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 100 else piece_area_color[5, 5]
 
+        # 5. 解析待放物
         p_cnts, _ = cv2.findContours(piece_area_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates_p = []
         for cnt in p_cnts:
             if cv2.contourArea(cnt) < (orig_unit**2) * 0.2: continue
             x, y, pw, ph = cv2.boundingRect(cnt)
             if pw > 6*orig_unit or ph > 6*orig_unit: continue
-            candidates_p.append([x, y + start_y, pw, ph, x + pw/2])
+            candidates_p.append([x, y + ay_s, pw, ph, x + pw/2])
 
-        final_list = sorted(candidates_p, key=lambda p: p[0])[:3]
+        final_pieces = sorted(candidates_p, key=lambda p: p[0])[:3]
         p_unit = orig_unit * self.piece_scale
         
-        temp_pieces_t, temp_pieces_c = [], []
-        s_pt, s_pc = 0, 0
-        for x, ay, pw, ph, _ in final_list:
+        for x, ay, pw, ph, _ in final_pieces:
             mask = thresh[ay:ay+ph, x:x+pw]
             color_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            g_t, g_c, st, sc = self.parse_piece_strict(mask, color_roi, pw, ph, p_unit, x, ay, global_bg_color)
-            temp_pieces_t.append(g_t); temp_pieces_c.append(g_c)
-            s_pt += st; s_pc += sc
-            
-        # 結算與繪圖
-        self.thresh_count, self.color_count = s_bt + s_pt, s_bc + s_pc
-        if self.color_count >= self.thresh_count:
-            self.grid_state, self.detected_pieces, self.chosen_method = grid_color, temp_pieces_c, "顏色判定 (Color Mode)"
-        else:
-            self.grid_state, self.detected_pieces, self.chosen_method = grid_thresh, temp_pieces_t, "二值化判定 (Thresh Mode)"
-
-        # 繪製 Debug 圖 (略，詳見 parse 函數內的繪圖)
-        for r in range(8):
-            for c in range(8):
-                is_t, is_c = grid_thresh[r][c], grid_color[r][c]
-                cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (0, 150, 0), 1)
-                cv2.polylines(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.15, 0.85)], True, (0,0,255 if is_t else 200), 2 if is_t else 1)
-                cv2.polylines(self.img_debug_color, [self.get_cell_poly(pts1, r, c)], True, (80,80,80), 1)
-                cv2.fillPoly(self.img_debug_color, [self.get_cell_poly_sampling(pts1, r, c, 0.4, 0.6)], (255,255,255) if is_c else (120,120,120))
-
+            self.detected_pieces.append(self.parse_piece_color_only(mask, color_roi, pw, ph, p_unit, x, ay, global_bg_color))
+        
+        cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
         return True
 
-    def parse_piece_strict(self, mask, color_roi, pw, ph, unit, ox, oy, bg_color):
+    def parse_piece_color_only(self, mask, color_roi, pw, ph, unit, ox, oy, bg_color):
         nz = cv2.findNonZero(mask)
-        if nz is None: return [[1]], [[1]], 1, 1
+        if nz is None: return [[1]]
         mx, my, mw, mh = cv2.boundingRect(nz)
         cols, rows = max(1, min(5, int(round(mw/unit)))), max(1, min(5, int(round(mh/unit))))
         col_b, row_b = np.linspace(0, mw, cols+1).astype(int), np.linspace(0, mh, rows+1).astype(int)
-        grid_t, grid_c = [[0]*cols for _ in range(rows)], [[0]*cols for _ in range(rows)]
-        s_t, s_c = 0, 0
+        grid = [[0]*cols for _ in range(rows)]
         
-        cv2.circle(self.img_debug_color, (ox + 5, oy - 10), 5, bg_color.tolist(), -1)
-        
+        # 在方塊上方標示偵測到的背景色
+        cv2.circle(self.img_debug, (ox + 5, oy - 10), 5, bg_color.tolist(), -1)
+
         for r in range(rows):
             for c in range(cols):
                 c_s, c_e, r_s, r_e = col_b[c], col_b[c+1], row_b[r], row_b[r+1]
-                roi_m = mask[r_s:r_e, c_s:c_e]
-                if roi_m.size > 4 and all([(cv2.countNonZero(sub)/sub.size > 0.01 if sub.size>0 else 0) for sub in [roi_m[0:r_e-r_s//2, 0:c_e-c_s//2]]]):
-                    grid_t[r][c] = 1; s_t += 1
+                # 採樣單元格中心 20% 區域
+                cx_s, cx_e = c_s + int(0.4* (c_e-c_s)), c_s + int(0.6* (c_e-c_s))
+                cy_s, cy_e = r_s + int(0.4* (r_e-r_s)), r_s + int(0.6* (r_e-r_s))
+                patch = color_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
                 
-                patch = color_roi[r_s+int(0.4*(r_e-r_s)):r_s+int(0.6*(r_e-r_s)), c_s+int(0.4*(c_e-c_s)):c_s+int(0.6*(c_e-c_s))]
-                if patch.size > 0 and np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color) > 40:
-                    grid_c[r][c] = 1; s_c += 1
+                dist = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color) if patch.size > 0 else 0
+                is_p = dist > 40
+                grid[r][c] = 1 if is_p else 0
 
+                # 繪製 Debug
                 sx, sy, ex, ey = ox+mx+c_s, oy+my+r_s, ox+mx+c_e, oy+my+r_e
-                cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), (0,0,255 if grid_t[r][c] else 200), 1)
-                cv2.rectangle(self.img_debug_color, (sx, sy), (ex, ey), (80,80,80), 1)
-                cv2.rectangle(self.img_debug_color, (ox+mx+c_s+int(0.4*(c_e-c_s)), oy+my+r_s+int(0.4*(r_e-r_s))), (ox+mx+c_s+int(0.6*(c_e-c_s)), oy+my+r_s+int(0.6*(r_e-r_s))), (255,255,255) if grid_c[r][c] else (120,120,120), -1)
-        return grid_t, grid_c, s_t, s_c
+                cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), (80,80,80), 1)
+                fill_color = (255,255,255) if is_p else (120,120,120)
+                cv2.rectangle(self.img_debug, (ox+mx+cx_s, oy+my+cy_s), (ox+mx+cx_e, oy+my+cy_e), fill_color, -1)
+        return grid
 
     def lerp(self, p1, p2, t): return p1 + (p2 - p1) * t
     def get_p(self, pts, row, col):
@@ -173,42 +143,3 @@ class VisionEngine:
         s = pts.sum(axis=1); rect[0], rect[2] = pts[np.argmin(s)], pts[np.argmax(s)]
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
-
-class LogicSolver:
-    def solve(self, grid, pieces, p_indices, path=[]):
-        if not p_indices: return path
-        for i in p_indices:
-            p = pieces[i]
-            for r in range(8):
-                for c in range(8):
-                    if self.can_place(grid, p, r, c):
-                        next_g = self.simulate(grid, p, r, c)
-                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], path + [(i, r, c, *self.get_cleared(self.place_only(grid, p, r, c)))])
-                        if res: return res
-        return None
-
-    def can_place(self, grid, p, r, c):
-        for pr in range(len(p)):
-            for pc in range(len(p[0])):
-                if p[pr][pc] and (r+pr>=8 or c+pc>=8 or grid[r+pr][c+pc]): return False
-        return True
-
-    def place_only(self, grid, p, r, c):
-        ng = copy.deepcopy(grid)
-        for pr in range(len(p)):
-            for pc in range(len(p[0])):
-                if p[pr][pc]: ng[r+pr][c+pc] = 1
-        return ng
-
-    def get_cleared(self, grid):
-        rs = [i for i, row in enumerate(grid) if all(row)]
-        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
-        return rs, cs
-
-    def simulate(self, grid, p, r, c):
-        ng = self.place_only(grid, p, r, c)
-        rs, cs = self.get_cleared(ng)
-        for i in rs: ng[i] = [0]*8
-        for j in cs: 
-            for i in range(8): ng[i][j] = 0
-        return ng
