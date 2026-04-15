@@ -122,7 +122,10 @@ if file:
         # --- 3. 待放物預覽 (深色風格 + 手機防換行) ---
         st.markdown("---")
         combined_img = get_combined_pieces_image(eng.detected_pieces)
-        
+        if combined_img is not None:
+            # ✨ 關鍵：這裡會顯示並排不換行的 5x5 方塊圖
+            st.image(combined_img, caption="方塊預覽", width='stretch')
+
         # --- 4. Feedback 反饋系統 ---
         st.markdown("---")
         with st.form("feedback_form"):
