@@ -74,28 +74,22 @@ def quick_log_to_sheets(msg):
         return True
     except:
         return False
-        return False
 
 # --- 1. UI 介面 ---
 st.title("🧩 Block Blast Solver Beta")
 file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'], key="uploader_final")
 
 if file:
-    # --- A. 自動簽到邏輯 ---
     if "last_logged_file" not in st.session_state or st.session_state.last_logged_file != file.name:
         if quick_log_to_sheets("v"):
             st.session_state.last_logged_file = file.name
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
-    # 建立 VisionEngine 實例
     eng = VisionEngine(cv_img)
-    
-    # 判斷偵測是否成功
     is_detected = eng.process()
 
     if is_detected:
-        # --- A. 偵測成功：展示解法建議 ---
         st.header("💡 解法建議")
         sol = LogicSolver().solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
@@ -125,20 +119,18 @@ if file:
             d_mask = cv2.cvtColor(combined_t, cv2.COLOR_BGR2GRAY) > 0
             base_canvas[d_mask] = cv2.addWeighted(combined_t, 0.7, base_canvas, 0.3, 0)[d_mask]
             
-            st.image(base_canvas, channels="BGR", width='stretch')
+            st.image(base_canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("⚠️ 此盤面無解，請檢查下方偵測結果。")
         
-        # --- B. 偵測成功：待放物預覽 ---
         st.markdown("---")
         combined_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_img is not None:
-            st.image(combined_img, caption="偵測到的待放方塊", width='stretch')
+            st.image(combined_img, caption="偵測到的待放方塊", use_container_width=True)
     else:
-        # --- C. 偵測失敗：僅顯示錯誤訊息 ---
         st.error("❌ 無法定位棋盤，請確認截圖是否完整且未遮擋邊框。")
 
-    # --- 2. Feedback 反饋系統 (不論偵測成功與否均顯示) ---
+    # --- 2. Feedback 反饋系統 ---
     st.markdown("---")
     st.subheader("🚩 Feedback 錯誤回報 ")
     with st.form("feedback_form"):
@@ -149,11 +141,15 @@ if file:
                     os.makedirs("temp", exist_ok=True)
                     tmp_path = "temp/report_latest.jpg"
                     
-                    # 決定要上傳哪張圖：有偵測圖就傳偵測圖，沒有就傳原始圖
-                    report_img = eng.img_debug if is_detected else cv_img
+                    # ✨ 若有偵測成功，將兩張 Debug 圖水平拼接上傳
+                    if is_detected:
+                        report_img = np.hstack((eng.img_debug, eng.img_debug_color))
+                    else:
+                        report_img = cv_img
+                        
                     cv2.imwrite(tmp_path, report_img)
-                    
                     img_url = upload_to_imgbb(tmp_path)
+                    
                     conn = st.connection("gsheets", type=GSheetsConnection)
                     tz = timezone(timedelta(hours=8)) 
                     now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
@@ -168,7 +164,15 @@ if file:
             except Exception as e: 
                 st.error(f"同步失敗：{e}")
 
-    # --- 3. Debug 區塊 ---
+    # --- 3. Debug 區塊 (雙圖並排顯示) ---
     if is_detected:
         with st.expander("🛠️ 查看辨識細節 (Debug)"):
-            st.image(eng.img_debug, channels="BGR", width='stretch')
+            st.markdown(f"### 🏆 最終採用策略：**{eng.chosen_method}**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**舊版二值化判定** (偵測數: {eng.thresh_count})")
+                st.image(eng.img_debug, channels="BGR", use_container_width=True)
+            with col2:
+                st.markdown(f"**新版顏色判定** (偵測數: {eng.color_count})")
+                st.image(eng.img_debug_color, channels="BGR", use_container_width=True)
