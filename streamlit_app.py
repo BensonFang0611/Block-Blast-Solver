@@ -18,7 +18,7 @@ STEP_COLORS = [
 ]
 GRAY_ELIMINATED = (40, 40, 40) 
 
-st.set_page_config(page_title="Block Blast Solver Pro", layout="wide")
+st.set_page_config(page_title="Block Blast Solver Beta", layout="wide")
 
 # --- 輔助函式：將 pieces 數據轉為小圖顯示 ---
 def draw_piece_preview(piece_grid):
