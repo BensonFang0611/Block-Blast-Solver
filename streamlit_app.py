@@ -76,7 +76,7 @@ def upload_to_imgbb(file_path):
         return response.json()["data"]["url"]
 
 # --- 1. UI 介面 ---
-st.title("🧩 Block Blast Solver Professional")
+st.title("🧩 Block Blast Solver Beta")
 file = st.file_uploader("📸 上傳遊戲截圖", type=['png','jpg','jpeg','heic'], key="uploader_final")
 
 if file:
@@ -139,7 +139,7 @@ if file:
                             "Comment": msg, "Image_Link": img_url}])
                         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
                         conn.update(worksheet=SHEET_NAME, data=pd.concat([existing_data, new_entry], ignore_index=True))
-                        st.success(f"✅ 成功上傳！謝謝你的回饋，你的一小步將會是人類的一大步！！")
+                        st.success(f"✅ 成功上傳！謝謝你的回饋，你的一小步將會成為人類的一大步！！")
                 except Exception as e: st.error(f"同步失敗：{e}")
 
         with st.expander("🛠️ (Debug)"):
