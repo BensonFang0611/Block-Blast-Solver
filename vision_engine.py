@@ -58,7 +58,7 @@ class VisionEngine:
         u = 400 / 8
         centers_color = []
         
-        # [階段 A] 收集顏色找底色
+        # --- 8x8 顏色採樣 ---
         for r in range(8):
             for c in range(8):
                 cx_s, cx_e = int((c + 0.45) * u), int((c + 0.55) * u)
@@ -67,41 +67,35 @@ class VisionEngine:
                 mean_c = np.mean(roi_c, axis=(0, 1)) if roi_c.size > 0 else np.array([0,0,0])
                 centers_color.append((r, c, mean_c))
 
+        # 找出棋盤底色
         color_counts = {}
         for r, c, mc in centers_color:
             q = (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20))
             color_counts[q] = color_counts.get(q, 0) + 1
-        
         top_qs = sorted(color_counts.items(), key=lambda x: x[1], reverse=True)[:3]
         bg_q = min(top_qs, key=lambda x: sum(x[0]))[0]
         bg_color_mean = np.mean([mc for r, c, mc in centers_color if (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20)) == bg_q], axis=0)
 
-        # [階段 B] 計算盤面狀態
         grid_thresh = [[0]*8 for _ in range(8)]
         grid_color = [[0]*8 for _ in range(8)]
-        
-        sum_board_t = 0
-        sum_board_c = 0
+        sum_board_t, sum_board_c = 0, 0
 
         for r in range(8):
             for c in range(8):
-                # 二值化判定
+                # 舊版二值化
                 x_s, x_e = int((c + 0.15) * u), int((c + 0.85) * u)
                 y_s, y_e = int((r + 0.15) * u), int((r + 0.85) * u)
                 roi_t = warp_loc[y_s:y_e, x_s:x_e]
-                white_ratio = cv2.countNonZero(roi_t) / roi_t.size if roi_t.size > 0 else 0
-                if white_ratio > 0.01:
+                if cv2.countNonZero(roi_t) / roi_t.size > 0.01:
                     grid_thresh[r][c] = 1
                     sum_board_t += 1
-
-                # 顏色判定
+                # 新版顏色
                 mc = centers_color[r*8 + c][2]
-                dist = np.linalg.norm(mc - bg_color_mean)
-                if dist > 45:
+                if np.linalg.norm(mc - bg_color_mean) > 45:
                     grid_color[r][c] = 1
                     sum_board_c += 1
 
-        # ====== 4. 找待放物區域 ======
+        # --- 待放物區域處理 ---
         img_h = self.img_orig.shape[0]
         bottom_y = int(max(pts1[:, 1]))
         start_y = bottom_y + 40
@@ -128,12 +122,9 @@ class VisionEngine:
         final_list = filtered_pieces[:3]
         p_unit = orig_unit * self.piece_scale
         
-        temp_pieces_t = []
-        temp_pieces_c = []
-        sum_pieces_t = 0
-        sum_pieces_c = 0
+        temp_pieces_t, temp_pieces_c = [], []
+        sum_pieces_t, sum_pieces_c = 0, 0
         
-        # [階段 C] 計算待放物狀態
         for x, ay, pw, ph, _ in final_list:
             mask = thresh[ay:ay+ph, x:x+pw]
             color_roi = self.img_orig[ay:ay+ph, x:x+pw]
@@ -143,40 +134,34 @@ class VisionEngine:
             sum_pieces_t += s_t
             sum_pieces_c += s_c
             
-        # ====== 5. 總結算 (修正：計算完棋盤+方塊再決定用哪個) ======
+        # --- 決策邏輯 ---
         self.thresh_count = sum_board_t + sum_pieces_t
         self.color_count = sum_board_c + sum_pieces_c
         
-        if self.color_count > self.thresh_count:
+        if self.color_count >= self.thresh_count:
             self.grid_state = grid_color
             self.detected_pieces = temp_pieces_c
-            self.chosen_method = "新版顏色判定 (Color)"
+            self.chosen_method = "顏色判定 (Color Mode)"
         else:
             self.grid_state = grid_thresh
             self.detected_pieces = temp_pieces_t
-            self.chosen_method = "舊版二值化判定 (Threshold)"
+            self.chosen_method = "二值化判定 (Thresh Mode)"
 
-        # ====== 6. 繪製棋盤狀態到各自的 Debug 圖 ======
+        # --- Debug 繪圖 (8x8 棋盤部分) ---
         for r in range(8):
             for c in range(8):
-                # 畫二值化圖 (綠色底格，紅/暗紅判定)
+                # 1. 舊版 Debug (紅/暗紅)
                 is_t = grid_thresh[r][c] == 1
-                inner_cp_t = self.get_cell_poly_sampling(pts1, r, c, 0.15, 0.85)
                 color_t = (0, 0, 255) if is_t else (0, 0, 200)
                 cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (0, 150, 0), 1)
-                cv2.polylines(self.img_debug, [inner_cp_t], True, color_t, 2 if is_t else 1)
+                cv2.polylines(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.15, 0.85)], True, color_t, 2 if is_t else 1)
 
-                # 畫全彩顏色圖 (改為 白色/灰色，並加黃色取樣點)
+                # 2. 新版 Debug (白色/灰色小方塊填滿)
                 is_c = grid_color[r][c] == 1
-                inner_cp_c = self.get_cell_poly_sampling(pts1, r, c, 0.45, 0.55)
-                poly_full = self.get_cell_poly(pts1, r, c)
-                color_c = (255, 255, 255) if is_c else (150, 150, 150) # 白/灰
-                cv2.polylines(self.img_debug_color, [poly_full], True, color_c, 2 if is_c else 1)
-                cv2.fillPoly(self.img_debug_color, [inner_cp_c], (0, 255, 255)) # 黃色取樣點
-                
-        # 標示總偵測數量在圖片左上角
-        cv2.putText(self.img_debug, f"Total: {self.thresh_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(self.img_debug_color, f"Total: {self.color_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                color_c = (255, 255, 255) if is_c else (120, 120, 120) # 白(有) / 灰(無)
+                inner_cp_c = self.get_cell_poly_sampling(pts1, r, c, 0.40, 0.60) # 中心小格
+                cv2.polylines(self.img_debug_color, [self.get_cell_poly(pts1, r, c)], True, (50, 50, 50), 1) # 隱約的格線
+                cv2.fillPoly(self.img_debug_color, [inner_cp_c], color_c)
 
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
         cv2.polylines(self.img_debug_color, [pts1.astype(int)], True, (0, 255, 0), 3)
@@ -194,64 +179,48 @@ class VisionEngine:
         grid_t = [[0]*cols for _ in range(rows)]
         grid_c = [[0]*cols for _ in range(rows)]
         
-        # 修正：利用二值化反轉遮罩，提取「非方塊」的外部像素來算背景色，不怕方塊卡角落
+        # 背景色採樣：取四周非方塊區域
         bg_mask_full = cv2.bitwise_not(mask)
         bg_pixels = color_roi[bg_mask_full == 255]
-        if len(bg_pixels) > 0:
-            bg_color = np.mean(bg_pixels, axis=0)
-        else:
-            bg_color = np.mean(color_roi[0:5, 0:5], axis=(0,1))
+        bg_color = np.mean(bg_pixels, axis=0) if len(bg_pixels) > 0 else np.mean(color_roi[0:5, 0:5], axis=(0,1))
             
-        sum_t = 0
-        sum_c = 0
+        sum_t, sum_c = 0, 0
             
         for r in range(rows):
             for c in range(cols):
-                # --- 1. 二值化判定 ---
+                # --- 二值化判定 ---
                 rx_s, rx_e = int(mx + (c + 0.0) * cw), int(mx + (c + 1.0) * cw)
                 ry_s, ry_e = int(my + (r + 0.0) * ch), int(my + (r + 1.0) * ch)
                 roi = mask[ry_s:ry_e, rx_s:rx_e]
-                
                 is_p_t = False
                 if roi.size > 4:
                     h, w = roi.shape
                     mid_h, mid_w = h // 2, w // 2
                     q = [roi[0:mid_h, 0:mid_w], roi[0:mid_h, mid_w:w], roi[mid_h:h, 0:mid_w], roi[mid_h:h, mid_w:w]]
-                    def check(sub): return (cv2.countNonZero(sub)/sub.size > 0.01) if sub.size > 0 else False
-                    is_p_t = all([check(sub) for sub in q])
-                
+                    is_p_t = all([(cv2.countNonZero(sub)/sub.size > 0.01 if sub.size > 0 else False) for sub in q])
                 if is_p_t:
                     grid_t[r][c] = 1
                     sum_t += 1
 
-                # --- 2. 顏色判定 ---
+                # --- 顏色判定 ---
                 cx_s, cx_e = int(mx + (c + 0.45) * cw), int(mx + (c + 0.55) * cw)
                 cy_s, cy_e = int(my + (r + 0.45) * ch), int(my + (r + 0.55) * ch)
-                cx_e = max(cx_s+1, cx_e); cy_e = max(cy_s+1, cy_e)
-                patch = color_roi[cy_s:cy_e, cx_s:cx_e]
-                
-                is_p_c = False
-                if patch.size > 0:
-                    patch_mean = np.mean(patch, axis=(0,1))
-                    dist = np.linalg.norm(patch_mean - bg_color)
-                    is_p_c = dist > 40 # 稍微下調距離容錯率，預防漏算
-                
+                patch = color_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                is_p_c = np.linalg.norm(np.mean(patch, axis=(0,1)) - bg_color) > 40 if patch.size > 0 else False
                 if is_p_c:
                     grid_c[r][c] = 1
                     sum_c += 1
 
-                # --- 繪圖區 ---
+                # --- Debug 繪圖 (待放物部分) ---
                 sx, sy, ex, ey = ox + rx_s, oy + ry_s, ox + rx_e, oy + ry_e
-                
-                # 畫二值化圖
-                color_t = (0, 0, 255) if is_p_t else (0, 0, 200)
-                cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), color_t, 2 if is_p_t else 1)
-                
-                # 畫全彩顏色圖 (修正：畫出整個方塊範圍，並改為白/灰)
-                color_c = (255, 255, 255) if is_p_c else (150, 150, 150)
-                cv2.rectangle(self.img_debug_color, (sx, sy), (ex, ey), color_c, 2 if is_p_c else 1)
-                # 畫中心取樣點 (黃色) 標示
-                cv2.rectangle(self.img_debug_color, (ox+cx_s, oy+cy_s), (ox+cx_e, oy+cy_e), (0, 255, 255), -1)
+                # 1. 二值化 Debug
+                cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), (0, 0, 255 if is_p_t else 200), 2 if is_p_t else 1)
+                # 2. 顏色 Debug：中心 10% 區域填滿 白色(有) 或 灰色(無)
+                csx, csy = ox + cx_s, oy + cy_s
+                cex, cey = ox + max(cx_s+1, cx_e), oy + max(cy_s+1, cy_e)
+                color_fill = (255, 255, 255) if is_p_c else (120, 120, 120)
+                cv2.rectangle(self.img_debug_color, (csx, csy), (cex, cey), color_fill, -1) # 填滿小方格
+                cv2.rectangle(self.img_debug_color, (sx, sy), (ex, ey), (80, 80, 80), 1) # 畫個淡灰色框代表格線
 
         return grid_t, grid_c, sum_t, sum_c
 
@@ -269,46 +238,3 @@ class VisionEngine:
         s = pts.sum(axis=1); rect[0], rect[2] = pts[np.argmin(s)], pts[np.argmax(s)]
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
-
-class LogicSolver:
-    def solve(self, grid, pieces, p_indices, path=[]):
-        if not p_indices: return path
-        for i in p_indices:
-            p = pieces[i]
-            for r in range(8):
-                for c in range(8):
-                    if self.can_place(grid, p, r, c):
-                        placed = self.place_only(grid, p, r, c)
-                        rows, cols = self.get_cleared(placed)
-                        next_g = self.simulate(grid, p, r, c)
-                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], path + [(i, r, c, rows, cols)])
-                        if res: return res
-        return None
-
-    def can_place(self, grid, p, r, c):
-        for pr in range(len(p)):
-            for pc in range(len(p[0])):
-                if p[pr][pc] == 1:
-                    tr, tc = r + pr, c + pc
-                    if tr < 0 or tr >= 8 or tc < 0 or tc >= 8 or grid[tr][tc] == 1: return False
-        return True
-
-    def place_only(self, grid, p, r, c):
-        ng = copy.deepcopy(grid)
-        for pr in range(len(p)):
-            for pc in range(len(p[0])):
-                if p[pr][pc] == 1: ng[r+pr][c+pc] = 1
-        return ng
-
-    def get_cleared(self, grid):
-        rs = [i for i, row in enumerate(grid) if all(row)]
-        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
-        return rs, cs
-
-    def simulate(self, grid, p, r, c):
-        ng = self.place_only(grid, p, r, c)
-        rs, cs = self.get_cleared(ng)
-        for i in rs: ng[i] = [0]*8
-        for j in cs: 
-            for i in range(8): ng[i][j] = 0
-        return ng
