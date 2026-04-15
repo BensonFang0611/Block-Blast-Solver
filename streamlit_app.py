@@ -36,9 +36,9 @@ def draw_piece_preview_5x5(piece_grid):
             if piece_grid[r][c]:
                 tr, tc = r + offset_r, c + offset_c
                 # 深藍色填充 (0, 160, 200)
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 160, 200), -1)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (200, 160, 0), -1)
                 # 較深的藍色邊框 (0, 80, 100)
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (0, 80, 100), 1)
+                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (100, 80, 0), 1)
     return canvas
 
 # --- 🛠️ 輔助功能 2：水平縫合待放方塊 ---
