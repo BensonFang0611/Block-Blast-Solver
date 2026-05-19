@@ -18,8 +18,10 @@ class VisionEngine:
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
         _, _, v_channel = cv2.split(hsv)
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
-        
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
+        kernel_v = np.ones((11, 11), np.uint8)
+        thresh_v = cv2.morphologyEx(blur, cv2.MORPH_OPEN, kernel_v)
+        thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+        thresh = cv2.adaptiveThreshold(thresh_v, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
         piece_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         self.img_debug = self.img_orig.copy()
 
