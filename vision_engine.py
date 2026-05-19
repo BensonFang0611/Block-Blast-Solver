@@ -56,10 +56,8 @@ class VisionEngine:
         kernel_h, kernel_v = np.ones((1, 51), np.uint8), np.ones((51, 1), np.uint8)
         thresh_h = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
-        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
         thresh_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
         # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
         # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
