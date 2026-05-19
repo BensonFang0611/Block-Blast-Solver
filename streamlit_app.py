@@ -94,7 +94,7 @@ def log_to_sheets(msg, img_url="None"):
 # --- 💡 新增：辨識失敗的彈出詢問視窗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
-    st.write("無法定位棋盤，請問您是否回報錯誤圖片")
+    st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -102,15 +102,20 @@ def show_failure_dialog(eng, cv_img):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
                 report_path = "temp/feedback_auto.jpg"
+                
                 # 有偵測物件就存 debug 圖，沒有就存原圖
                 cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
                 
                 url = upload_to_imgbb(report_path)
                 if log_to_sheets("系統自動回報：無法定位棋盤", url):
                     st.success("✅ 回報成功！感謝您的協助！")
-                    st.rerun()
+            
+            # 💡 確保在上傳與提示結束後，重整網頁以關閉對話框
+            st.rerun()
+            
     with col2:
         if st.button("否，取消", use_container_width=True):
+            # 💡 點擊取消直接重整網頁，立刻關閉對話框
             st.rerun()
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
