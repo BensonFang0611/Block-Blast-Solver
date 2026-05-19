@@ -58,19 +58,31 @@ class VisionEngine:
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
         warp_color = self.warp_orig
         
-        # 3. 採樣 8x8 棋盤底色（最低明度判定法）
-        # 將透視變換後的棋盤轉為 HSV，以便直接取得明度 (V)
-        warp_hsv = cv2.cvtColor(warp_color, cv2.COLOR_BGR2HSV)
+        # 3. 採樣 8x8 棋盤底色（灰階/明度判定法）
+        # 💡 直接拿原圖轉灰階，灰階值就是明度，不需要處理成二值化或複雜色彩空間
+        warp_gray = cv2.cvtColor(warp_color, cv2.COLOR_BGR2GRAY)
         
         u = 400 / 8
-        centers_v = [] # 儲存每個格子的明度
+        centers_v = [] 
         
         for r in range(8):
             for c in range(8):
                 cx, cy = int((c + 0.5) * u), int((r + 0.5) * u)
-                # 抓取中心 4x4 區域的 V 通道 (索引 2)
-                roi_v = warp_hsv[cy-2:cy+2, cx-2:cx+2, 2]
-                centers_v.append(np.median(roi_v) if roi_v.size > 0 else 0)
+                # 直接抓取中心 4x4 區域的灰階值
+                roi_gray = warp_gray[cy-2:cy+2, cx-2:cx+2]
+                centers_v.append(np.median(roi_gray) if roi_gray.size > 0 else 0)
+
+        # 找出這 64 格當中的「最低明度」作為底色基準
+        base_bg_v = min(centers_v)
+        
+        # 設定容許範圍：底色明度 + 3% (255 的 3% 約為 7.65)
+        tolerance = 255 * 0.03
+
+        # 判定棋盤方塊狀態
+        for r in range(8):
+            for c in range(8):
+                is_p = centers_v[r*8+c] > (base_bg_v + tolerance)
+                self.grid_state[r][c] = 1 if is_p else 0
 
         # 找出這 64 格當中的「最低明度」作為底色基準
         base_bg_v = min(centers_v)
