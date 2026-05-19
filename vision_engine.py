@@ -17,76 +17,103 @@ class VisionEngine:
         # ==========================================
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
         _, s, v = cv2.split(hsv)
-        v_channel = np.maximum.reduce([s, v]) # 取 S 與 V 的最大值，強化特徵
+        v_channel = np.maximum.reduce([s, v]) 
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
         
-        # 基礎二值化
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
-        
-        # 💡 找棋盤專用：使用較強的「閉運算」黏合嚴重的斷線與破洞
-        board_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
-        
-        # 💡 找下方待放方塊專用：使用較輕微的閉運算，保留小方塊形狀細節
         piece_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-
-        # 初始化 Debug 圖
         self.img_debug = self.img_orig.copy()
 
         # ==========================================
-        # 2. 定位棋盤（閉運算 + 同心矩形找內框法）
+        # 2. 定位棋盤（宏觀大框隔離 + 微觀內線反推）
         # ==========================================
-        # 使用 RETR_TREE 建立完整的輪廓階層，內外框才都會被找出來
-        cnts, hierarchy = cv2.findContours(board_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if not cnts:
-            return False
+        # [步驟 A]：先用超大筆刷抓出「粗略的外輪廓」
+        board_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+        cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts: return False
 
         candidates = []
         img_area = v_channel.shape[0] * v_channel.shape[1]
-        
         for cnt in cnts:
             x, y, w, h = cv2.boundingRect(cnt)
             area = w * h
+            if area > (img_area * 0.1) and 0.8 <= float(w) / h <= 1.2:
+                candidates.append({'area': area, 'bx': x, 'by': y, 'bw': w, 'bh': h})
+        
+        if not candidates: return False
+        
+        # 取得粗略的棋盤大框 (bx, by, bw, bh)
+        rough_box = max(candidates, key=lambda c: c['area'])
+        bx, by, bw, bh = rough_box['bx'], rough_box['by'], rough_box['bw'], rough_box['bh']
+
+        # [步驟 B]：建立 90% 隔離區 (上下左右各往內縮 5%，完美避開邊緣特效)
+        sx, sy = int(bx + bw * 0.05), int(by + bh * 0.05)
+        sw, sh = int(bw * 0.90), int(bh * 0.90)
+
+        # 提取乾淨的水平與垂直線
+        kernel_h, kernel_v = np.ones((1, 51), np.uint8), np.ones((51, 1), np.uint8)
+        thresh_h = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
+        thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
+        thresh_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
+        thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+
+        # 💡 [關鍵]：只在隔離區 (ROI) 內進行投影積分，雜訊降至 0%！
+        roi_h = thresh_h[sy:sy+sh, sx:sx+sw]
+        roi_v = thresh_v[sy:sy+sh, sx:sx+sw]
+        proj_y = np.sum(roi_h, axis=1) / 255
+        proj_x = np.sum(roi_v, axis=0) / 255
+
+        def get_exact_edges_from_roi(projection, offset_start, rough_min, rough_max):
+            """ 從純淨的 ROI 中抓取內線，並精確反推 0 與 8 的邊界 """
+            if len(projection) == 0: return rough_min, rough_max
             
-            # 過濾太小或太大的雜訊 (排除整個畫面，或小於畫面 10% 的東西)
-            if area < (img_area * 0.1) or area > (img_area * 0.9): 
-                continue
-                
-            # 確保它是正方形 (長寬比在 0.8 ~ 1.2 之間)
-            aspect_ratio = float(w) / h
-            if 0.8 <= aspect_ratio <= 1.2:
-                # 計算中心點
-                cx, cy = x + w/2.0, y + h/2.0
-                candidates.append({
-                    'area': area,
-                    'center': (cx, cy),
-                    'approx': np.array([[[x, y]], [[x, y + h]], [[x + w, y + h]], [[x + w, y]]], dtype=np.int32)
-                })
+            threshold = np.max(projection) * 0.20
+            valid_coords = np.where(projection > threshold)[0]
+            if len(valid_coords) < 3: return rough_min, rough_max
 
-        if not candidates:
-            return False
+            # 融合線條並加上 offset_start 轉回全域座標
+            peaks = []
+            current_group = [valid_coords[0]]
+            for i in range(1, len(valid_coords)):
+                if valid_coords[i] - valid_coords[i-1] <= 15:
+                    current_group.append(valid_coords[i])
+                else:
+                    peak_idx = current_group[np.argmax(projection[current_group])]
+                    peaks.append(peak_idx + offset_start)
+                    current_group = [valid_coords[i]]
+            peak_idx = current_group[np.argmax(projection[current_group])]
+            peaks.append(peak_idx + offset_start)
 
-       # 依面積從大到小排序
-        candidates = sorted(candidates, key=lambda c: c['area'], reverse=True)
+            if len(peaks) < 3: return rough_min, rough_max
 
-        # 💡 尋找「內框」的新邏輯：最大正方形面積 90% 以上的最小正方形
-        max_area = candidates[0]['area']
-        threshold_area = max_area * 0.90 # 設定 90% 為門檻
-        
-        best_cand = candidates[0] # 預設為最大正方形
-        
-        for cand in candidates:
-            # 只要這個框的面積大於等於最大框的 90%
-            if cand['area'] >= threshold_area:
-                # 為了極致的安全，加上基本的同心檢查，防止抓到旁邊無關的特效框 (容許值稍微放寬到 30)
-                dist = np.linalg.norm(np.array(candidates[0]['center']) - np.array(cand['center']))
-                if dist < 30: 
-                    best_cand = cand # 持續更新為較小的框
-            else:
-                # 因為已經從大到小排好序了，一旦遇到小於 90% 的框，後面的都不用看了
-                break 
+            # 計算精準的格子大小 u
+            diffs = np.diff(peaks)
+            valid_diffs = [d for d in diffs if d > 20]
+            if not valid_diffs: return rough_min, rough_max
+            u = np.median(valid_diffs)
 
-        # 進行透視變換
-        pts1 = self.order_points(best_cand['approx'].reshape(4, 2))
+            # 💡 [神級防呆]：挑選中間隨便一條內線當作「錨點」
+            anchor_peak = peaks[len(peaks) // 2]
+            
+            # 用粗略的外框(rough_min)來判斷這個錨點到底是第幾條線 (1~7)
+            line_index = int(round((anchor_peak - rough_min) / u))
+            
+            # 直接數學推演：精確邊界 = 錨點 - (索引 * 格子大小)
+            exact_min = anchor_peak - line_index * u
+            exact_max = exact_min + 8 * u
+            
+            return exact_min, exact_max
+
+        # [步驟 C]：利用隔離區抓到的內線，精確反推出完美的上下左右外框
+        min_y, max_y = get_exact_edges_from_roi(proj_y, sy, by, by + bh)
+        min_x, max_x = get_exact_edges_from_roi(proj_x, sx, bx, bx + bw)
+
+        approx = np.array([
+            [[min_x, min_y]], [[min_x, max_y]], 
+            [[max_x, max_y]], [[max_x, min_y]]
+        ], dtype=np.int32)
+
+        pts1 = self.order_points(approx.reshape(4, 2))
         orig_unit = np.linalg.norm(pts1[0] - pts1[1]) / 8.0
         M = cv2.getPerspectiveTransform(pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
@@ -97,39 +124,35 @@ class VisionEngine:
         warp_hsv = cv2.cvtColor(self.warp_orig, cv2.COLOR_BGR2HSV)
         u = 400 / 8
         centers_v = []
-        
         for r in range(8):
             for c in range(8):
                 cx, cy = int((c + 0.5) * u), int((r + 0.5) * u)
                 roi_v = warp_hsv[cy-2:cy+2, cx-2:cx+2, 2]
                 centers_v.append(np.median(roi_v) if roi_v.size > 0 else 0)
 
-        # 找出最低明度作為底色，並設定 3% 寬容度
         base_bg_v = min(centers_v)
         tolerance = 255 * 0.03
-
         for r in range(8):
             for c in range(8):
                 is_p = centers_v[r*8+c] > (base_bg_v + tolerance)
                 self.grid_state[r][c] = 1 if is_p else 0
-                
-                # 繪製 Debug 狀態
                 cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (80,80,80), 1)
                 color_fill = (255,255,255) if is_p else (120,120,120)
                 cv2.fillPoly(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.4, 0.6)], color_fill)
 
         # ==========================================
-        # 4. 全域採樣待放區背景色
+        # 4. 全域採樣待放區背景色 (含安全防呆)
         # ==========================================
         img_h = self.img_orig.shape[0]
         bottom_y = int(max(pts1[:, 1]))
         ay_s, ay_e = bottom_y + 40, int(img_h * 0.88)
+
+        if ay_s >= ay_e:
+            ay_e = img_h
+            if ay_s >= ay_e: return True 
         
-        # 💡 下半部尋找待放方塊時，改用保留細節的 piece_thresh
         piece_area_mask = piece_thresh[ay_s:ay_e, :]
         piece_area_color = self.img_orig[ay_s:ay_e, :]
-
-        # 腐蝕遮罩以獲取純淨背景
         bg_mask = cv2.bitwise_not(piece_area_mask)
         bg_mask = cv2.erode(bg_mask, np.ones((5, 5), np.uint8), iterations=2)
         bg_pixels = piece_area_color[bg_mask == 255]
@@ -141,23 +164,19 @@ class VisionEngine:
         p_cnts, _ = cv2.findContours(piece_area_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates_p = []
         for cnt in p_cnts:
-            if cv2.contourArea(cnt) < (orig_unit**2) * 0.2:
-                continue
+            if cv2.contourArea(cnt) < (orig_unit**2) * 0.2: continue
             x, y, pw, ph = cv2.boundingRect(cnt)
-            if pw > 6*orig_unit or ph > 6*orig_unit:
-                continue
+            if pw > 6*orig_unit or ph > 6*orig_unit: continue
             candidates_p.append([x, y + ay_s, pw, ph, x + pw/2])
 
         final_pieces = sorted(candidates_p, key=lambda p: p[0])[:3]
         p_unit = orig_unit * self.piece_scale
         self.detected_pieces = []
-        
         for x, ay, pw, ph, _ in final_pieces:
             mask = piece_thresh[ay:ay+ph, x:x+pw]
             color_roi = self.img_orig[ay:ay+ph, x:x+pw]
             self.detected_pieces.append(self.parse_piece_color_only(mask, color_roi, pw, ph, p_unit, x, ay, global_bg_color))
 
-        # 標示棋盤外框
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
         return True
 
