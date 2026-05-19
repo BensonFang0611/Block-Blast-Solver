@@ -119,7 +119,11 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
-    # ✨ 關鍵功能：User Visit 簽到機制
+    # 💡 只要上傳新檔案，就重置所有對話框狀態，確保新圖失敗時能重新彈出
+    if "show_dialog" in st.session_state:
+        del st.session_state.show_dialog
+    if "dialog_closed" in st.session_state:
+        del st.session_state.dialog_closed    # ✨ 關鍵功能：User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
         if log_to_sheets("User Visit"):
             st.session_state.logged_file = file.name
