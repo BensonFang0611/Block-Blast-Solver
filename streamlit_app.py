@@ -87,7 +87,7 @@ def log_to_sheets(msg, img_url="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 💡 修改：辨識失敗對話框 (加入狀態接力) ---
+# --- 💡 修改：辨識失敗對話框 (加入狀態接力與強制重整) ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
@@ -105,6 +105,7 @@ def show_failure_dialog(eng, cv_img):
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
+            st.rerun()  # 👈 關鍵修正：強制主網頁立刻重整！
             
     with col2:
         if st.button("否，取消", use_container_width=True):
@@ -112,6 +113,7 @@ def show_failure_dialog(eng, cv_img):
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
+            st.rerun()  # 👈 關鍵修正：強制主網頁立刻重整！
             
 # --- 💡 新增：第二個彈跳視窗 (感謝/完成提示) ---
 @st.dialog("🔔 系統提示")
