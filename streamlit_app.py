@@ -168,7 +168,7 @@ if file:
             
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p, color = eng.detected_pieces
+                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
                 # 繪製方塊本體與格線
                 for pr in range(len(p)):
