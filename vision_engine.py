@@ -16,8 +16,7 @@ class VisionEngine:
         # 1. 影像預處理 (萃取特徵與二值化)
         # ==========================================
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
-        _, s, v = cv2.split(hsv)
-        v_channel = np.maximum.reduce([s, v]) 
+        _, _, v_channel = cv2.split(hsv)
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
         
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
@@ -25,9 +24,8 @@ class VisionEngine:
         self.img_debug = self.img_orig.copy()
 
         # ==========================================
-        # 2. 定位棋盤（宏觀大框隔離 + 微觀內線反推）
+        # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
-        # [步驟 A]：先用超大筆刷抓出「粗略的外輪廓」
         board_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
         cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts: return False
@@ -46,93 +44,124 @@ class VisionEngine:
         rough_box = max(candidates, key=lambda c: c['area'])
         bx, by, bw, bh = rough_box['bx'], rough_box['by'], rough_box['bw'], rough_box['bh']
 
-        # [步驟 B]：建立 90% 隔離區 (上下左右各往內縮 5%，完美避開邊緣特效)
+        # 建立 90% 純淨區 (上下左右各往內縮 5%，避開邊緣特效)
         sx, sy = int(bx + bw * 0.05), int(by + bh * 0.05)
         sw, sh = int(bw * 0.90), int(bh * 0.90)
+
+        # 💡 [ Debug 視覺化 ]：在全域 Debug 圖上框出粗略大框與 ROI 隔離區
+        cv2.rectangle(self.img_debug, (bx, by), (bx + bw, by + bh), (255, 0, 0), 2)
+        cv2.rectangle(self.img_debug, (sx, sy), (sx + sw, sy + sh), (255, 50, 50), 2)
 
         # 提取乾淨的水平與垂直線
         kernel_h, kernel_v = np.ones((1, 51), np.uint8), np.ones((51, 1), np.uint8)
         thresh_h = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
+        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
         thresh_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
+        # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
+        # (你可以把原本的 img_roi_color = ... 那行刪掉)
+        
+        proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
+        proj_x = np.sum(thresh_v[sy:sy+sh, sx:sx+sw], axis=0) / 255
 
-        # 💡 [關鍵]：只在隔離區 (ROI) 內進行投影積分，雜訊降至 0%！
-        roi_h = thresh_h[sy:sy+sh, sx:sx+sw]
-        roi_v = thresh_v[sy:sy+sh, sx:sx+sw]
-        proj_y = np.sum(roi_h, axis=1) / 255
-        proj_x = np.sum(roi_v, axis=0) / 255
-
-        def get_exact_edges_from_roi(projection, offset_start, rough_min):
-            """ 質心平均法 + 線性迴歸：算出變異數最小、最完美的 0 與 8 邊界 """
+        def get_exact_edges_from_roi_debug(projection, offset_start, rough_min, is_horizontal):
+            """ 質心平均 + 線性迴歸最優擬合 (保留所有線條，交由數學平衡) """
             if len(projection) == 0: return None, None
             
-            threshold = np.max(projection) * 0.15
+            threshold = np.max(projection) * 0.50 
             valid_coords = np.where(projection > threshold)[0]
             if len(valid_coords) < 3: return None, None
 
-            # 💡 神招一：質心平均法 (Weighted Average)
-            peaks = []
+            # [步驟 1A]：初次質心平均
+            peaks_roi = []
             current_group = [valid_coords[0]]
             for i in range(1, len(valid_coords)):
-                # 如果線條距離相近，歸為同一團
                 if valid_coords[i] - valid_coords[i-1] <= 15:
                     current_group.append(valid_coords[i])
                 else:
-                    # 不取最高點，而是用「白點數量」當權重，算出這團線的平均中心點
                     weights = projection[current_group]
-                    center = np.average(current_group, weights=weights)
-                    peaks.append(center + offset_start)
+                    roi_center = np.average(current_group, weights=weights)
+                    peaks_roi.append(roi_center)
                     current_group = [valid_coords[i]]
-            
-            # 處理最後一團
             weights = projection[current_group]
-            center = np.average(current_group, weights=weights)
-            peaks.append(center + offset_start)
+            roi_center = np.average(current_group, weights=weights)
+            peaks_roi.append(roi_center)
 
-            if len(peaks) < 3: return None, None
+            if len(peaks_roi) < 3: return None, None
 
-            # 先求出粗略的間距，用來給這些線條「編號」
-            diffs = np.diff(peaks)
+            diffs = np.diff(peaks_roi)
             valid_diffs = [d for d in diffs if d > 20]
             if not valid_diffs: return None, None
             u_est = np.median(valid_diffs)
 
-            # 給每條線一個相對的整數索引 (例如 0, 1, 2... 或 0, 1, 3... 中間有斷層也沒關係)
+            # [步驟 1B]：二次強制合併 (不刪除任何線條)
             indices = [0]
-            for i in range(1, len(peaks)):
-                idx = int(round((peaks[i] - peaks[0]) / u_est))
-                indices.append(idx)
+            clean_peaks = [peaks_roi[0]]
+            for i in range(1, len(peaks_roi)):
+                diff_u = (peaks_roi[i] - clean_peaks[-1]) / u_est
+                idx_diff = int(round(diff_u))
+                
+                # 解決雙眼皮：如果距離小於半格，強制融合成一條質心
+                if diff_u < 0.5:
+                    clean_peaks[-1] = (clean_peaks[-1] + peaks_roi[i]) / 2.0
+                    continue
 
-            # 💡 神招二：線性迴歸 / 最小平方法 (Least Squares Fit)
-            # 利用數學公式尋找方差/標準差最小的解，擬合出方程式： 座標 = 索引 * 完美間距 + 完美起點
-            # polyfit 會回傳斜率 (最完美的格子大小 u_opt) 與 截距 (最完美的第 0 條線基準 offset_0)
-            u_opt, offset_0 = np.polyfit(indices, peaks, 1)
+                # 💡 移除極端值剃除：所有線條全數保留，忠實記錄並編號！
+                indices.append(indices[-1] + idx_diff)
+                clean_peaks.append(peaks_roi[i])
 
-            # 💡 神級防呆：確認 offset_0 到底是全域的第幾條線？
-            # 拿它跟我們在第一步抓到的粗略大外框 (rough_min) 比較
-            line_index = int(round((offset_0 - rough_min) / u_opt))
-            
-            # 數學推演：精確 0 邊界 = 基準點 - (索引 * 完美間距)
-            exact_min = offset_0 - line_index * u_opt
+            if len(clean_peaks) < 3: return None, None
+
+            # [步驟 1C - 視覺化 Debug]：直接畫在 self.img_debug (黃色細線)
+            color_centroid = (0, 255, 255) # BGR 黃色
+            for p_roi in clean_peaks:
+                p_global = int(round(p_roi + offset_start)) 
+                if is_horizontal: 
+                    cv2.line(self.img_debug, (sx, p_global), (sx + sw // 2, p_global), color_centroid, 1, cv2.LINE_AA)
+                else: 
+                    cv2.line(self.img_debug, (p_global, sy), (p_global, sy + sh // 2), color_centroid, 1, cv2.LINE_AA)
+
+            # [步驟 2]：線性迴歸擬合 (讓所有保留下來的線條共同決定出最完美的 u_opt)
+            u_opt, offset_0_roi = np.polyfit(indices, clean_peaks, 1)
+
+            # [步驟 2C - 視覺化 Debug]：直接畫在 self.img_debug (紅色粗線)
+            color_optimal = (0, 0, 255) # BGR 紅色
+            for k in range(0, 9): 
+                line_p_roi = offset_0_roi + k * u_opt
+                p_global = int(round(line_p_roi + offset_start)) 
+                
+                if is_horizontal:
+                    if sy <= p_global <= sy + sh:
+                        cv2.line(self.img_debug, (sx + sw // 2, p_global), (sx + sw, p_global), color_optimal, 2, cv2.LINE_AA)
+                else:
+                    if sx <= p_global <= sx + sw:
+                        cv2.line(self.img_debug, (p_global, sy + sh // 2), (p_global, sy + sh), color_optimal, 2, cv2.LINE_AA)
+
+            offset_0_global = offset_0_roi + offset_start
+            line_index = int(round((offset_0_global - rough_min) / u_opt))
+            exact_min = offset_0_global - line_index * u_opt
             exact_max = exact_min + 8 * u_opt
             
             return exact_min, exact_max
 
-        # [步驟 C]：利用隔離區抓到的內線，精確反推出完美的上下左右外框
-        min_y, max_y = get_exact_edges_from_roi(proj_y, sy, by)
-        min_x, max_x = get_exact_edges_from_roi(proj_x, sx, bx)
+        # ==========================================
+        # 呼叫與保險機制 (移除 cv2.imshow 彈出視窗)
+        # ==========================================
+        # 分別解析 Y 軸與 X 軸 (參數減少，不再傳入 img_roi)
+        min_y, max_y = get_exact_edges_from_roi_debug(proj_y, sy, by, is_horizontal=True)
+        min_x, max_x = get_exact_edges_from_roi_debug(proj_x, sx, bx, is_horizontal=False)
 
-        # 萬一真的被炸到連 3 條內線都找不到，我們就退回使用大外框內縮 3% 的保險機制
+        # 💡 [移除]：刪除了 cv2.imshow("Centroid(Yellow) vs LeastSquares(Red)", ...)
+
+        # 萬一真的被炸到連 3 條內線都找不到，保險機制啟動 (往內縮 3%)
         if None in (min_x, max_x, min_y, max_y):
             min_x, max_x = bx + bw * 0.03, bx + bw * 0.97
             min_y, max_y = by + bh * 0.03, by + bh * 0.97
 
-        approx = np.array([
-            [[min_x, min_y]], [[min_x, max_y]], 
-            [[max_x, max_y]], [[max_x, min_y]]
-        ], dtype=np.int32)
-
+        # 進行透視變換
+        approx = np.array([[[min_x, min_y]], [[min_x, max_y]], [[max_x, max_y]], [[max_x, min_y]]], dtype=np.int32)
         pts1 = self.order_points(approx.reshape(4, 2))
         orig_unit = np.linalg.norm(pts1[0] - pts1[1]) / 8.0
         M = cv2.getPerspectiveTransform(pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
