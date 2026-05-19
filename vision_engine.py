@@ -58,35 +58,40 @@ class VisionEngine:
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
         warp_color = self.warp_orig
         
-        # 3. 採樣 8x8 棋盤底色（純顏色判定）
+        # 3. 採樣 8x8 棋盤底色（最低明度判定法）
+        # 將透視變換後的棋盤轉為 HSV，以便直接取得明度 (V)
+        warp_hsv = cv2.cvtColor(warp_color, cv2.COLOR_BGR2HSV)
+        
         u = 400 / 8
-        centers_color = []
+        centers_v = [] # 儲存每個格子的明度
+        
         for r in range(8):
             for c in range(8):
                 cx, cy = int((c + 0.5) * u), int((r + 0.5) * u)
-                roi = warp_color[cy-2:cy+2, cx-2:cx+2]
-                centers_color.append(np.median(roi, axis=(0, 1)) if roi.size > 0 else [0,0,0])
+                # 抓取中心 4x4 區域的 V 通道 (索引 2)
+                roi_v = warp_hsv[cy-2:cy+2, cx-2:cx+2, 2]
+                centers_v.append(np.median(roi_v) if roi_v.size > 0 else 0)
 
-        # 尋找棋盤底色
-        color_bins = {}
-        for mc in centers_color:
-            q = (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20))
-            color_bins[q] = color_bins.get(q, 0) + 1
-        board_bg_q = max(color_bins, key=color_bins.get)
-        board_bg_rgb = np.mean([mc for mc in centers_color if (int(mc[0]/20), int(mc[1]/20), int(mc[2]/20)) == board_bg_q], axis=0)
+        # 找出這 64 格當中的「最低明度」作為底色基準
+        base_bg_v = min(centers_v)
+        
+        # 設定容許範圍：底色明度 + 3% (255 的 3% 約為 7.65)
+        tolerance = 255 * 0.03
 
         # 判定棋盤方塊狀態
         for r in range(8):
             for c in range(8):
-                dist = np.linalg.norm(centers_color[r*8+c] - board_bg_rgb)
-                is_p = dist > 45 # 顏色距離門檻
+                # 如果該格明度大於「底色 + 3%」，代表它是亮色的待放方塊
+                is_p = centers_v[r*8+c] > (base_bg_v + tolerance)
                 self.grid_state[r][c] = 1 if is_p else 0
-                
-                # Debug：繪製棋盤判定狀態
+
+        # Debug：繪製棋盤判定狀態
+        for r in range(8):
+            for c in range(8):
+                is_p = self.grid_state[r][c] == 1
                 cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (80,80,80), 1)
                 color_fill = (255,255,255) if is_p else (120,120,120)
                 cv2.fillPoly(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.4, 0.6)], color_fill)
-
         # 4. 全域採樣待放區背景色（取三個方塊間共通的空白處面積）
         img_h = self.img_orig.shape[0]
         bottom_y = int(max(pts1[:, 1]))
