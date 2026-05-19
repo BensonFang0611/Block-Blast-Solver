@@ -28,7 +28,7 @@ class VisionEngine:
         for cnt in cnts:
             area = cv2.contourArea(cnt)
             # 過濾太小的雜訊（至少佔畫面 10%）
-            if area < (s_channel.shape[0] * s_channel.shape[1] * 0.1): continue
+            if area < (gray.shape[0] * gray.shape[1] * 0.1): continue
             
             approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
             if len(approx) == 4:
