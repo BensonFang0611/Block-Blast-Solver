@@ -13,56 +13,76 @@ class VisionEngine:
 
     def process(self):
         # ==========================================
-        # 1. 影像預處理
+        # 1. 影像預處理 (萃取特徵與二值化)
         # ==========================================
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
         _, s, v = cv2.split(hsv)
         v_channel = np.maximum.reduce([s, v]) # 取 S 與 V 的最大值，強化特徵
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
         
-        # 💡 給上半部「霍夫轉換找棋盤」用的邊緣偵測
-        edges = cv2.Canny(blur, 50, 150)
-        
-        # 💡 給下半部「尋找待放方塊」用的二值化與閉運算
+        # 基礎二值化
         thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        
+        # 💡 找棋盤專用：使用較強的「閉運算」黏合嚴重的斷線與破洞
+        board_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+        
+        # 💡 找下方待放方塊專用：使用較輕微的閉運算，保留小方塊形狀細節
+        piece_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
         # 初始化 Debug 圖
         self.img_debug = self.img_orig.copy()
 
         # ==========================================
-        # 2. 定位棋盤（霍夫直線轉換暴力組合矩形法）
+        # 2. 定位棋盤（閉運算 + 同心矩形找內框法）
         # ==========================================
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=50)
-        if lines is None:
+        # 使用 RETR_TREE 建立完整的輪廓階層，內外框才都會被找出來
+        cnts, hierarchy = cv2.findContours(board_thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
             return False
 
-        horiz_y, vert_x = [], []
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(y1 - y2) < 15:   # 水平線
-                horiz_y.extend([y1, y2])
-            elif abs(x1 - x2) < 15: # 垂直線
-                vert_x.extend([x1, x2])
-
-        if not horiz_y or not vert_x:
-            return False
-
-        min_x, max_x = min(vert_x), max(vert_x)
-        min_y, max_y = min(horiz_y), max(horiz_y)
-        w, h = max_x - min_x, max_y - min_y
-        area = w * h
-
-        # 過濾太小的雜訊與檢查長寬比
-        if area < (v_channel.shape[0] * v_channel.shape[1] * 0.1): 
-            return False
-        if not (0.8 <= float(w) / h <= 1.2):
-            return False
-
-        approx = np.array([[[min_x, min_y]], [[min_x, min_y + h]], [[min_x + w, min_y + h]], [[min_x + w, min_y]]], dtype=np.int32)
+        candidates = []
+        img_area = v_channel.shape[0] * v_channel.shape[1]
         
+        for cnt in cnts:
+            x, y, w, h = cv2.boundingRect(cnt)
+            area = w * h
+            
+            # 過濾太小或太大的雜訊 (排除整個畫面，或小於畫面 10% 的東西)
+            if area < (img_area * 0.1) or area > (img_area * 0.9): 
+                continue
+                
+            # 確保它是正方形 (長寬比在 0.8 ~ 1.2 之間)
+            aspect_ratio = float(w) / h
+            if 0.8 <= aspect_ratio <= 1.2:
+                # 計算中心點
+                cx, cy = x + w/2.0, y + h/2.0
+                candidates.append({
+                    'area': area,
+                    'center': (cx, cy),
+                    'approx': np.array([[[x, y]], [[x, y + h]], [[x + w, y + h]], [[x + w, y]]], dtype=np.int32)
+                })
+
+        if not candidates:
+            return False
+
+        # 依面積從大到小排序
+        candidates = sorted(candidates, key=lambda c: c['area'], reverse=True)
+
+        # 💡 尋找「內框」的神奇邏輯
+        best_cand = candidates[0] # 預設用最大的正方形
+        if len(candidates) > 1:
+            c1 = candidates[0]['center']
+            c2 = candidates[1]['center']
+            
+            # 計算最大與第二大正方形的「中心點距離」
+            dist = np.linalg.norm(np.array(c1) - np.array(c2))
+            
+            # 如果兩個正方形的圓心距離小於 20 像素，代表它們是「同心矩形 (外框與內框)」
+            if dist < 20: 
+                best_cand = candidates[1] # 捨棄外框，精準選擇第二大的內框！
+
         # 進行透視變換
-        pts1 = self.order_points(approx.reshape(4, 2))
+        pts1 = self.order_points(best_cand['approx'].reshape(4, 2))
         orig_unit = np.linalg.norm(pts1[0] - pts1[1]) / 8.0
         M = cv2.getPerspectiveTransform(pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
@@ -101,7 +121,8 @@ class VisionEngine:
         bottom_y = int(max(pts1[:, 1]))
         ay_s, ay_e = bottom_y + 40, int(img_h * 0.88)
         
-        piece_area_mask = thresh[ay_s:ay_e, :]
+        # 💡 下半部尋找待放方塊時，改用保留細節的 piece_thresh
+        piece_area_mask = piece_thresh[ay_s:ay_e, :]
         piece_area_color = self.img_orig[ay_s:ay_e, :]
 
         # 腐蝕遮罩以獲取純淨背景
@@ -128,7 +149,7 @@ class VisionEngine:
         self.detected_pieces = []
         
         for x, ay, pw, ph, _ in final_pieces:
-            mask = thresh[ay:ay+ph, x:x+pw]
+            mask = piece_thresh[ay:ay+ph, x:x+pw]
             color_roi = self.img_orig[ay:ay+ph, x:x+pw]
             self.detected_pieces.append(self.parse_piece_color_only(mask, color_roi, pw, ph, p_unit, x, ay, global_bg_color))
 
