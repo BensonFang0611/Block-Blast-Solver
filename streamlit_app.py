@@ -205,8 +205,8 @@ if file:
         show_failure_dialog(eng, cv_img)
 
     # 2️⃣ 處理第二個視窗：感謝對話框
-    if st.session_state.get("show_thanks_dialog", False):
-        show_thanks_dialog(st.session_state
+        if st.session_state.get("show_thanks_dialog", False):
+            show_thanks_dialog(st.session_state)
 
     if "show_thanks_dialog" in st.session_state and st.session_state.show_thanks_dialog == False:
         del st.session_state.show_thanks_dialog
