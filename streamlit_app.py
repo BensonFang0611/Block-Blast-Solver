@@ -162,9 +162,13 @@ if file:
             # --- 繪製解法示意圖 ---
             canvas = eng.warp_orig.copy()
             u = 400 / 8
+            
+            # 💡 新增這行：預先給定空清單，防止第 0 步迴圈沒跑導致 NameError
+            cl_rs, cl_cs = [], []
+            
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
+                p, color = eng.detected_pieces
                 
                 # 繪製方塊本體與格線
                 for pr in range(len(p)):
