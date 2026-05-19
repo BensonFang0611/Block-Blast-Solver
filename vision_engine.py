@@ -16,29 +16,63 @@ class VisionEngine:
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
         _, s, v = cv2.split(hsv)
         v_channel = np.maximum.reduce([s, v])
-
-        # 3. 繼續你原本成功的二值化參數
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
-        
+        # Canny 能精準抓出物體的輪廓邊緣，比單純的二值化更適合用來找直線
+        edges = cv2.Canny(blur, 50, 150)
+
         # 初始化 Debug 圖
         self.img_debug = self.img_orig.copy()
 
-        # 2. 定位棋盤（保留抓取內框機制）
-        cnts, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if not cnts: return False
-        
-        candidates = []
-        for cnt in cnts:
-            area = cv2.contourArea(cnt)
-            # 過濾太小的雜訊（至少佔畫面 10%）
-            if area < (v_channel.shape[0] * v_channel.shape[1] * 0.1): continue
+        # 2. 定位棋盤（霍夫直線轉換法）
+        # 參數：解析度 1 像素, 角度解析度 1 度, 門檻值 100, 最短線長 100, 最大斷線間隙 50 (能接合 50 像素的斷點)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=50)
+
+        if lines is None:
+            return False
+
+        horiz_y = [] # 收集所有水平線的 Y 座標
+        vert_x = []  # 收集所有垂直線的 X 座標
+
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
             
-            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
-            if len(approx) == 4:
-                candidates.append({'area': area, 'approx': approx})
-        
-        if not candidates: return False
+            # 判斷是否為「水平線」 (Y 座標差異很小)
+            if abs(y1 - y2) < 15: 
+                horiz_y.extend([y1, y2])
+            # 判斷是否為「垂直線」 (X 座標差異很小)
+            elif abs(x1 - x2) < 15:
+                vert_x.extend([x1, x2])
+
+        # 如果沒抓到足夠的水平或垂直線，代表沒找到框
+        if not horiz_y or not vert_x:
+            return False
+
+        # 💡 終極組合：取最極端的座標來構成最大的外圍矩形
+        min_x, max_x = min(vert_x), max(vert_x)
+        min_y, max_y = min(horiz_y), max(horiz_y)
+
+        w = max_x - min_x
+        h = max_y - min_y
+        area = w * h
+
+        # 過濾太小的雜訊（至少佔畫面 10%）
+        if area < (v_channel.shape[0] * v_channel.shape[1] * 0.1): 
+            return False
+
+        # 檢查長寬比，確保它是正方形的遊戲盤面 (寬容度 0.8 ~ 1.2)
+        aspect_ratio = float(w) / h
+        if 0.8 <= aspect_ratio <= 1.2:
+            approx = np.array([
+                [[min_x, min_y]],
+                [[min_x, min_y + h]],
+                [[min_x + w, min_y + h]],
+                [[min_x + w, min_y]]
+            ], dtype=np.int32)
+            
+            # 配合後續的透視變換邏輯，將結果包裝成 best_cand
+            best_cand = {'area': area, 'approx': approx}
+        else:
+            return False
         
         # 排序：面積由大到小
         candidates = sorted(candidates, key=lambda x: x['area'], reverse=True)
