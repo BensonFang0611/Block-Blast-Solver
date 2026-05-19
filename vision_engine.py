@@ -65,21 +65,25 @@ class VisionEngine:
         if not candidates:
             return False
 
-        # 依面積從大到小排序
+       # 依面積從大到小排序
         candidates = sorted(candidates, key=lambda c: c['area'], reverse=True)
 
-        # 💡 尋找「內框」的神奇邏輯
-        best_cand = candidates[0] # 預設用最大的正方形
-        if len(candidates) > 1:
-            c1 = candidates[0]['center']
-            c2 = candidates[1]['center']
-            
-            # 計算最大與第二大正方形的「中心點距離」
-            dist = np.linalg.norm(np.array(c1) - np.array(c2))
-            
-            # 如果兩個正方形的圓心距離小於 20 像素，代表它們是「同心矩形 (外框與內框)」
-            if dist < 20: 
-                best_cand = candidates[1] # 捨棄外框，精準選擇第二大的內框！
+        # 💡 尋找「內框」的新邏輯：最大正方形面積 90% 以上的最小正方形
+        max_area = candidates[0]['area']
+        threshold_area = max_area * 0.90 # 設定 90% 為門檻
+        
+        best_cand = candidates[0] # 預設為最大正方形
+        
+        for cand in candidates:
+            # 只要這個框的面積大於等於最大框的 90%
+            if cand['area'] >= threshold_area:
+                # 為了極致的安全，加上基本的同心檢查，防止抓到旁邊無關的特效框 (容許值稍微放寬到 30)
+                dist = np.linalg.norm(np.array(candidates[0]['center']) - np.array(cand['center']))
+                if dist < 30: 
+                    best_cand = cand # 持續更新為較小的框
+            else:
+                # 因為已經從大到小排好序了，一旦遇到小於 90% 的框，後面的都不用看了
+                break 
 
         # 進行透視變換
         pts1 = self.order_points(best_cand['approx'].reshape(4, 2))
