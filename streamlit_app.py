@@ -135,4 +135,100 @@ if file:
 
     # 💡 防呆機制 2：只要是新的上傳動作，就完全解開封印重置對話框
     if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
-        for key in ["show_dialog", "dialog_closed",
+        for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
+            st.session_state.pop(key, None)
+        st.session_state.last_file_id = current_file_id
+
+    # ✨ User Visit 簽到機制
+    if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
+        if log_to_sheets("User Visit"):
+            st.session_state.logged_file = current_file_id
+
+    # 讀取影像
+    raw_pil_img = Image.open(file)
+    cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
+
+    # 初始化辨識引擎
+    eng = VisionEngine(cv_img)
+    
+    if eng.process():
+        st.header("💡 解法建議")
+        solver = LogicSolver()
+        sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
+        if sol:
+            step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
+            idx = int(step_label.split(' ')[1])
+            
+            # --- 繪製解法示意圖 ---
+            canvas = eng.warp_orig.copy()
+            u = 400 / 8
+            
+            # 💡 預先給定空清單，防止第 0 步迴圈沒跑導致 NameError
+            cl_rs, cl_cs = [], []
+            
+            for s in range(idx):
+                p_idx, row, col, cl_rs, cl_cs = sol[s]
+                # 💡 修正錯誤：補回這行被截斷的陣列索引！
+                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3] 
+                
+                # 繪製方塊本體與格線
+                for pr in range(len(p)):
+                    for pc in range(len(p[0])):
+                        if p[pr][pc]:
+                            x1, y1 = int((col+pc)*u), int((row+pr)*u)
+                            x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
+                            
+            # 繪製消除效果 (半透明融合)
+            overlay = canvas.copy()
+            for cr in (cl_rs or []):
+                cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+            for cc in (cl_cs or []):
+                cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                
+            cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+            st.image(canvas, channels="BGR", use_container_width=True)
+        else:
+            st.warning("此盤面無解:..)")
+            
+        # 待放方塊預覽
+        st.markdown("---")
+        combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
+        if combined_piece_img is not None:
+            st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
+
+    else:
+        # ❌ 辨識失敗
+        st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
+        if "dialog_closed" not in st.session_state:
+            st.session_state.show_dialog = True
+
+    # ==========================================
+    # 💡 彈跳視窗互斥控制中心
+    # ==========================================
+    if st.session_state.get("show_dialog", False):
+        show_failure_dialog(eng, cv_img)
+    elif st.session_state.get("show_thanks_dialog", False):
+        show_thanks_dialog(st.session_state.get("thanks_msg", ""))
+
+
+# --- 2. Feedback 回饋系統 ---
+st.markdown("---")
+st.subheader("🚩 Feedback 錯誤回報")
+with st.form("feedback_form"):
+    msg = st.text_input("如果有辨識錯誤，請告訴我!!")
+    if st.form_submit_button("🚀 送出"):
+        with st.spinner("同步中..."):
+            os.makedirs("temp", exist_ok=True)
+            report_path = "temp/feedback.jpg"
+            cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
+            url = upload_to_imgbb(report_path)
+            if log_to_sheets(msg, url):
+                st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
+
+st.markdown("""
+    <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
+        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
+    </div>
+""", unsafe_allow_html=True)
