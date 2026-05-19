@@ -13,10 +13,9 @@ class VisionEngine:
 
     def process(self):
         # 1. 影像預處理
-        hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
-        s_channel = hsv[:, :, 2]
-        blur = cv2.GaussianBlur(s_channel, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        gray = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 1)
         
         # 初始化 Debug 圖
         self.img_debug = self.img_orig.copy()
