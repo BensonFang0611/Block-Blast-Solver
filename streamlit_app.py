@@ -21,12 +21,10 @@ GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 # --- 🛠️ 輔助功能 1：繪製 5x5 深藍色風格方塊 ---
 def draw_piece_preview_5x5(piece_grid):
     grid_size, u = 5, 40
-    # 畫布背景為純黑，營造深色質感
     canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8)
     rows, cols = len(piece_grid), len(piece_grid[0])
     offset_r, offset_c = (grid_size - rows) // 2, (grid_size - cols) // 2
     
-    # 畫背景細格線 (深灰色)
     for i in range(grid_size + 1):
         cv2.line(canvas, (0, i*u), (grid_size*u, i*u), (40, 40, 40), 1)
         cv2.line(canvas, (i*u, 0), (i*u, grid_size*u), (40, 40, 40), 1)
@@ -35,9 +33,7 @@ def draw_piece_preview_5x5(piece_grid):
         for c in range(cols):
             if piece_grid[r][c]:
                 tr, tc = r + offset_r, c + offset_c
-                # 深藍色填充
                 cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (200, 160, 0), -1)
-                # 較深的藍色邊框
                 cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (100, 80, 0), 1)
     return canvas
 
@@ -47,7 +43,7 @@ def get_combined_pieces_image(detected_pieces):
         return None
     piece_imgs = [draw_piece_preview_5x5(p) for p in detected_pieces[:3]]
     h, w, c = piece_imgs[0].shape
-    gap_width = 15 # 縫合間隙 (黑色)
+    gap_width = 15
     black_gap = np.zeros((h, gap_width, c), dtype=np.uint8)
     
     stack_list = []
@@ -70,7 +66,7 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets (包含 User Visit) ---
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets ---
 def log_to_sheets(msg, img_url="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -78,7 +74,6 @@ def log_to_sheets(msg, img_url="None"):
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         new_entry = pd.DataFrame([{"Timestamp": now_tw, "Comment": msg, "Image_Link": img_url}])
         
-        # 讀取並合併
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=updated_df)
@@ -101,7 +96,6 @@ def show_failure_dialog(eng, cv_img):
                 url = upload_to_imgbb(report_path)
                 log_to_sheets("系統自動回報：無法定位棋盤", url)
             
-            # 徹底封印第一個視窗，並開啟感謝視窗
             st.session_state.dialog_closed = True  
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
@@ -110,7 +104,6 @@ def show_failure_dialog(eng, cv_img):
             
     with col2:
         if st.button("否，取消", use_container_width=True):
-            # 徹底封印第一個視窗，並開啟感謝視窗
             st.session_state.dialog_closed = True  
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
@@ -122,7 +115,6 @@ def show_failure_dialog(eng, cv_img):
 def show_thanks_dialog(msg):
     st.write(msg)
     if st.button("確定", use_container_width=True):
-        # 關閉自己並重整，徹底清空畫面
         st.session_state.show_thanks_dialog = False
         st.rerun() 
 
@@ -132,105 +124,15 @@ st.title("🧩 Block Blast Solver ")
 
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
+if file is None:
+    # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
+    for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file"]:
+        st.session_state.pop(key, None)
+
 if file:
-    # 💡 只要上傳新檔案，就完全重置所有對話框的快取狀態，確保新圖能正常彈窗
-    if "last_file_name" not in st.session_state or st.session_state.last_file_name != file.name:
-        for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
-            st.session_state.pop(key, None)
-        st.session_state.last_file_name = file.name
+    # 取得這次上傳的「唯一識別碼」
+    current_file_id = getattr(file, "file_id", str(file.size) + file.name)
 
-    # ✨ 關鍵功能：User Visit 簽到機制
-    if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
-        if log_to_sheets("User Visit"):
-            st.session_state.logged_file = file.name
-
-    # 讀取影像
-    raw_pil_img = Image.open(file)
-    cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
-
-    # 初始化辨識引擎
-    eng = VisionEngine(cv_img)
-    
-    if eng.process():
-        st.header("💡 解法建議")
-        solver = LogicSolver()
-        sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-        if sol:
-            step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
-            idx = int(step_label.split(' ')[1])
-            
-            # --- 繪製解法示意圖 ---
-            canvas = eng.warp_orig.copy()
-            u = 400 / 8
-            
-            # 💡 新增這行：預先給定空清單，防止第 0 步迴圈沒跑導致 NameError
-            cl_rs, cl_cs = [], []
-            
-            for s in range(idx):
-                p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
-                
-                # 繪製方塊本體與格線
-                for pr in range(len(p)):
-                    for pc in range(len(p[0])):
-                        if p[pr][pc]:
-                            x1, y1 = int((col+pc)*u), int((row+pr)*u)
-                            x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
-                            
-            # 繪製消除效果 (半透明融合)
-            overlay = canvas.copy()
-            for cr in (cl_rs or []):
-                cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-            for cc in (cl_cs or []):
-                cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                
-            cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-            st.image(canvas, channels="BGR", use_container_width=True)
-        else:
-            st.warning("此盤面無解:..)")
-            
-        # 待放方塊預覽
-        st.markdown("---")
-        combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
-        if combined_piece_img is not None:
-            st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
-
-    else:
-        # ❌ 進入這裡代表辨識失敗
-        st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
-        
-        # 💡 只要辨識失敗，且我們當前這輪還沒有主動關閉過它，就開啟對話框顯示狀態
-        if "dialog_closed" not in st.session_state:
-            st.session_state.show_dialog = True
-
-    # ==========================================
-    # 💡 彈跳視窗互斥控制中心 (絕對不會撞車版)
-    # ==========================================
-    if st.session_state.get("show_dialog", False):
-        show_failure_dialog(eng, cv_img)
-    elif st.session_state.get("show_thanks_dialog", False): # 👈 改用 elif 確保絕對互斥！
-        show_thanks_dialog(st.session_state.get("thanks_msg", "")) # 👈 這裡必須正確取出文字！
-
-
-# --- 2. Feedback 回饋系統 ---
-st.markdown("---")
-st.subheader("🚩 Feedback 錯誤回報")
-with st.form("feedback_form"):
-    msg = st.text_input("如果有辨識錯誤，請告訴我!!")
-    if st.form_submit_button("🚀 送出"):
-        with st.spinner("同步中..."):
-            os.makedirs("temp", exist_ok=True)
-            report_path = "temp/feedback.jpg"
-            # 優先上傳 Debug 圖以便排錯
-            cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
-            url = upload_to_imgbb(report_path)
-            if log_to_sheets(msg, url):
-                st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
-
-st.markdown("""
-    <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
-    </div>
-""", unsafe_allow_html=True)
+    # 💡 防呆機制 2：只要是新的上傳動作，就完全解開封印重置對話框
+    if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
+        for key in ["show_dialog", "dialog_closed",
