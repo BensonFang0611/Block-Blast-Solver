@@ -12,7 +12,7 @@ from vision_engine import VisionEngine, LogicSolver
 
 # --- 🚀 核心配置 ---
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
-SHEET_NAME = "Sheet1" 
+SHEET_NAME = "Sheet1"
 
 # 顏色定義 (BGR)
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
@@ -35,20 +35,19 @@ def draw_piece_preview_5x5(piece_grid):
         for c in range(cols):
             if piece_grid[r][c]:
                 tr, tc = r + offset_r, c + offset_c
-                # 深藍色填充 (0, 160, 200)
+                # 深藍色填充
                 cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (200, 160, 0), -1)
-                # 較深的藍色邊框 (0, 80, 100)
+                # 較深的藍色邊框
                 cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (100, 80, 0), 1)
     return canvas
 
 # --- 🛠️ 輔助功能 2：水平縫合待放方塊 ---
 def get_combined_pieces_image(detected_pieces):
-    if not detected_pieces: return None
+    if not detected_pieces:
+        return None
     piece_imgs = [draw_piece_preview_5x5(p) for p in detected_pieces[:3]]
-    
     h, w, c = piece_imgs[0].shape
-    gap_width = 15
-    # 縫合間隙 (黑色)
+    gap_width = 15 # 縫合間隙 (黑色)
     black_gap = np.zeros((h, gap_width, c), dtype=np.uint8)
     
     stack_list = []
@@ -56,7 +55,6 @@ def get_combined_pieces_image(detected_pieces):
         stack_list.append(img)
         if i < len(piece_imgs) - 1:
             stack_list.append(black_gap)
-            
     return np.hstack(stack_list)
 
 # --- 🛠️ 輔助功能 3：圖片上傳 ImgBB ---
@@ -64,10 +62,10 @@ def upload_to_imgbb(file_path):
     try:
         with open(file_path, "rb") as file:
             img_base64 = base64.b64encode(file.read())
-            data = {"key": IMGBB_API_KEY, "image": img_base64}
-            response = requests.post("https://api.imgbb.com/1/upload", data=data)
-            if response.status_code == 200:
-                return response.json()["data"]["url"]
+        data = {"key": IMGBB_API_KEY, "image": img_base64}
+        response = requests.post("https://api.imgbb.com/1/upload", data=data)
+        if response.status_code == 200:
+            return response.json()["data"]["url"]
         return "Upload Error"
     except:
         return "Upload Failed"
@@ -76,13 +74,10 @@ def upload_to_imgbb(file_path):
 def log_to_sheets(msg, img_url="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        tz = timezone(timedelta(hours=8)) 
+        tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-        new_entry = pd.DataFrame([{
-            "Timestamp": now_tw,
-            "Comment": msg,
-            "Image_Link": img_url
-        }])
+        new_entry = pd.DataFrame([{"Timestamp": now_tw, "Comment": msg, "Image_Link": img_url}])
+        
         # 讀取並合併
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
@@ -91,11 +86,11 @@ def log_to_sheets(msg, img_url="None"):
     except Exception as e:
         st.error(f"Sheet Error: {e}")
         return False
-# --- 💡 終極修改：對話框內不放 rerun ---
+
+# --- 💡 對話框定義：內部完全不放 rerun 避免快取 Bug ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
-    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("是，回報錯誤", type="primary", use_container_width=True):
@@ -106,12 +101,12 @@ def show_failure_dialog(eng, cv_img):
                 url = upload_to_imgbb(report_path)
                 log_to_sheets("系統自動回報：無法定位棋盤", url)
             
-            # 💡 重點 1：只改狀態，然後用 st.form_submit_button 以外的標準手法觸發外面
+            # 💡 僅改變狀態，由外層主程式負責重整關閉
             st.session_state.show_dialog = False
-            
     with col2:
         if st.button("否，取消", use_container_width=True):
             st.session_state.show_dialog = False
+
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
 st.title("🧩 Block Blast Solver ")
@@ -119,35 +114,28 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
-    # 💡 只要上傳新檔案，就重置所有對話框狀態，確保新圖失敗時能重新彈出
+    # 💡 只要上傳新檔案，就完全重置對話框的所有快取狀態
     if "show_dialog" in st.session_state:
         del st.session_state.show_dialog
     if "dialog_closed" in st.session_state:
-        del st.session_state.dialog_closed    # ✨ 關鍵功能：User Visit 簽到機制
+        del st.session_state.dialog_closed
+
+    # ✨ 關鍵功能：User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
         if log_to_sheets("User Visit"):
             st.session_state.logged_file = file.name
-# 💡 【核心修正】把對話框搬到最外層獨立執行，不受 if/else 邏輯區塊的干擾
-if st.session_state.get("show_dialog", False):
-    show_failure_dialog(eng, cv_img)
-
-# 💡 當對話框內部把狀態改成 False 時，外面這裡主動捕捉，並徹底 rerun 刷新前端元件
-if "show_dialog" in st.session_state and st.session_state.show_dialog == False:
-    st.session_state.dialog_closed = True # 標記已經關閉過，避免網頁重整後又自動打開
-    del st.session_state.show_dialog
-    st.rerun()
 
     # 讀取影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
-    
-    # 辨識引擎
+
+    # 初始化辨識引擎
     eng = VisionEngine(cv_img)
+    
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-        
         if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
@@ -155,70 +143,73 @@ if "show_dialog" in st.session_state and st.session_state.show_dialog == False:
             # --- 繪製解法示意圖 ---
             canvas = eng.warp_orig.copy()
             u = 400 / 8
-            
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
-                # ✨ 繪製方塊本體與格線 (Border)
+                # 繪製方塊本體與格線
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
                             x1, y1 = int((col+pc)*u), int((row+pr)*u)
                             x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                            # 填滿顏色
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
-                            # 加上黑色邊框 (格線)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
-
-                # 繪製消除效果 (半透明融合)
-                overlay = canvas.copy()
-                for cr in (cl_rs or []):
-                    cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-                for cc in (cl_cs or []):
-                    cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                # 融合消除層
-                cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-            
+                            
+            # 繪製消除效果 (半透明融合)
+            overlay = canvas.copy()
+            for cr in (cl_rs or []):
+                cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+            for cc in (cl_cs or []):
+                cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                
+            cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("此盤面無解:..)")
-
+            
         # 待放方塊預覽
         st.markdown("---")
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_piece_img is not None:
             st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
-        
-        # Debug 資訊
-        #with st.expander("🛠️ Debug"):
-        #    st.write("白色 = 方塊 | 灰色 = 空位 | 左上圓點 = 背景顏色採樣參考")
-        #    st.image(eng.img_debug, channels="BGR", use_container_width=True)
+
     else:
+        # ❌ 進入這裡代表辨識失敗
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
         
-        # 💡 只要辨識失敗，且我們沒有主動關閉過它，就開啟對話框狀態
+        # 💡 只要辨識失敗，且我們當前這輪還沒有主動關閉過它，就開啟對話框顯示狀態
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
-    # --- 2. Feedback 回饋系統 ---
-    st.markdown("---")
-    st.subheader("🚩 Feedback 錯誤回報")
-    with st.form("feedback_form"):
-        msg = st.text_input("如果有辨識錯誤，請告訴我!!")
-        if st.form_submit_button("🚀 送出"):
-            with st.spinner("同步中..."):
-                os.makedirs("temp", exist_ok=True)
-                report_path = "temp/feedback.jpg"
-                # 優先上傳 Debug 圖以便排錯
-                cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
-                
-                url = upload_to_imgbb(report_path)
-                if log_to_sheets(msg, url):
-                    st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
+    # 💡 【終極修正核心】將對話框判斷移至整個辨識模組的最外層、最後面
+    # 確保此處 eng 與 cv_img 變數絕對存在，且不會被 if/else 提早截斷
+    if st.session_state.get("show_dialog", False):
+        show_failure_dialog(eng, cv_img)
+
+    # 當對話框內部按鈕點擊後將狀態改為 False，由最外層主導銷毀與重整
+    if "show_dialog" in st.session_state and st.session_state.show_dialog == False:
+        st.session_state.dialog_closed = True  # 標記已手動關閉，防止重整後無限循環再彈出
+        del st.session_state.show_dialog
+        st.rerun()
+
+# --- 2. Feedback 回饋系統 ---
+st.markdown("---")
+st.subheader("🚩 Feedback 錯誤回報")
+with st.form("feedback_form"):
+    msg = st.text_input("如果有辨識錯誤，請告訴我!!")
+    if st.form_submit_button("🚀 送出"):
+        with st.spinner("同步中..."):
+            os.makedirs("temp", exist_ok=True)
+            report_path = "temp/feedback.jpg"
+            # 優先上傳 Debug 圖以便排錯
+            cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
+            url = upload_to_imgbb(report_path)
+            if log_to_sheets(msg, url):
+                st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
 st.markdown("""
-<div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-    Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
-</div>
+    <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
+        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
+    </div>
 """, unsafe_allow_html=True)
