@@ -87,7 +87,7 @@ def log_to_sheets(msg, img_url="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 💡 修改：辨識失敗對話框 (加入狀態接力與強制重整) ---
+# --- 💡 修改：辨識失敗對話框 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
@@ -101,27 +101,29 @@ def show_failure_dialog(eng, cv_img):
                 url = upload_to_imgbb(report_path)
                 log_to_sheets("系統自動回報：無法定位棋盤", url)
             
-            # 💡 接力賽：關閉自己，開啟感謝視窗
+            # 💡 徹底封印第一個視窗，並開啟感謝視窗
+            st.session_state.dialog_closed = True  # 👈 新增這行！防止主程式再次打開它
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
-            st.rerun()  # 👈 關鍵修正：強制主網頁立刻重整！
+            st.rerun()
             
     with col2:
         if st.button("否，取消", use_container_width=True):
-            # 💡 接力賽：關閉自己，開啟感謝視窗
+            # 💡 徹底封印第一個視窗，並開啟感謝視窗
+            st.session_state.dialog_closed = True  # 👈 新增這行！防止主程式再次打開它
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
-            st.rerun()  # 👈 關鍵修正：強制主網頁立刻重整！
+            st.rerun()
             
-# --- 💡 新增：第二個彈跳視窗 (感謝/完成提示) ---
+# --- 💡 修改：第二個彈跳視窗 ---
 @st.dialog("🔔 系統提示")
 def show_thanks_dialog(msg):
     st.write(msg)
     if st.button("確定", use_container_width=True):
-        # 點擊確定後，把自己的開關關掉
         st.session_state.show_thanks_dialog = False
+        st.rerun() # 👈 新增這行！強制重整以關閉自己
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
@@ -202,14 +204,9 @@ if file:
     if st.session_state.get("show_dialog", False):
         show_failure_dialog(eng, cv_img)
 
-    if "show_dialog" in st.session_state and st.session_state.show_dialog == False:
-        st.session_state.dialog_closed = True  
-        del st.session_state.show_dialog
-        st.rerun() # 觸發重整，徹底關閉第一個視窗
-
-    # 2️⃣ 處理第二個視窗：感謝對話框 (會在第一個視窗關閉後接力跳出)
+    # 2️⃣ 處理第二個視窗：感謝對話框
     if st.session_state.get("show_thanks_dialog", False):
-        show_thanks_dialog(st.session_state.get("thanks_msg", ""))
+        show_thanks_dialog(st.session_state
 
     if "show_thanks_dialog" in st.session_state and st.session_state.show_thanks_dialog == False:
         del st.session_state.show_thanks_dialog
