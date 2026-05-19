@@ -94,7 +94,7 @@ def log_to_sheets(msg, img_url="None"):
 # --- 💡 新增：辨識失敗的彈出詢問視窗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
-    st.write("系統無法精確定位棋盤，請問是否要自動送出錯誤回報以協助優化？")
+    st.write("無法定位棋盤，請問您是否回報錯誤圖片")
     
     col1, col2 = st.columns(2)
     with col1:
