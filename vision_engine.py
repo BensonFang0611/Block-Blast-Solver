@@ -63,50 +63,70 @@ class VisionEngine:
         proj_y = np.sum(roi_h, axis=1) / 255
         proj_x = np.sum(roi_v, axis=0) / 255
 
-        def get_exact_edges_from_roi(projection, offset_start, rough_min, rough_max):
-            """ 從純淨的 ROI 中抓取內線，並精確反推 0 與 8 的邊界 """
-            if len(projection) == 0: return rough_min, rough_max
+        def get_exact_edges_from_roi(projection, offset_start, rough_min):
+            """ 質心平均法 + 線性迴歸：算出變異數最小、最完美的 0 與 8 邊界 """
+            if len(projection) == 0: return None, None
             
-            threshold = np.max(projection) * 0.20
+            threshold = np.max(projection) * 0.15
             valid_coords = np.where(projection > threshold)[0]
-            if len(valid_coords) < 3: return rough_min, rough_max
+            if len(valid_coords) < 3: return None, None
 
-            # 融合線條並加上 offset_start 轉回全域座標
+            # 💡 神招一：質心平均法 (Weighted Average)
             peaks = []
             current_group = [valid_coords[0]]
             for i in range(1, len(valid_coords)):
+                # 如果線條距離相近，歸為同一團
                 if valid_coords[i] - valid_coords[i-1] <= 15:
                     current_group.append(valid_coords[i])
                 else:
-                    peak_idx = current_group[np.argmax(projection[current_group])]
-                    peaks.append(peak_idx + offset_start)
+                    # 不取最高點，而是用「白點數量」當權重，算出這團線的平均中心點
+                    weights = projection[current_group]
+                    center = np.average(current_group, weights=weights)
+                    peaks.append(center + offset_start)
                     current_group = [valid_coords[i]]
-            peak_idx = current_group[np.argmax(projection[current_group])]
-            peaks.append(peak_idx + offset_start)
+            
+            # 處理最後一團
+            weights = projection[current_group]
+            center = np.average(current_group, weights=weights)
+            peaks.append(center + offset_start)
 
-            if len(peaks) < 3: return rough_min, rough_max
+            if len(peaks) < 3: return None, None
 
-            # 計算精準的格子大小 u
+            # 先求出粗略的間距，用來給這些線條「編號」
             diffs = np.diff(peaks)
             valid_diffs = [d for d in diffs if d > 20]
-            if not valid_diffs: return rough_min, rough_max
-            u = np.median(valid_diffs)
+            if not valid_diffs: return None, None
+            u_est = np.median(valid_diffs)
 
-            # 💡 [神級防呆]：挑選中間隨便一條內線當作「錨點」
-            anchor_peak = peaks[len(peaks) // 2]
+            # 給每條線一個相對的整數索引 (例如 0, 1, 2... 或 0, 1, 3... 中間有斷層也沒關係)
+            indices = [0]
+            for i in range(1, len(peaks)):
+                idx = int(round((peaks[i] - peaks[0]) / u_est))
+                indices.append(idx)
+
+            # 💡 神招二：線性迴歸 / 最小平方法 (Least Squares Fit)
+            # 利用數學公式尋找方差/標準差最小的解，擬合出方程式： 座標 = 索引 * 完美間距 + 完美起點
+            # polyfit 會回傳斜率 (最完美的格子大小 u_opt) 與 截距 (最完美的第 0 條線基準 offset_0)
+            u_opt, offset_0 = np.polyfit(indices, peaks, 1)
+
+            # 💡 神級防呆：確認 offset_0 到底是全域的第幾條線？
+            # 拿它跟我們在第一步抓到的粗略大外框 (rough_min) 比較
+            line_index = int(round((offset_0 - rough_min) / u_opt))
             
-            # 用粗略的外框(rough_min)來判斷這個錨點到底是第幾條線 (1~7)
-            line_index = int(round((anchor_peak - rough_min) / u))
-            
-            # 直接數學推演：精確邊界 = 錨點 - (索引 * 格子大小)
-            exact_min = anchor_peak - line_index * u
-            exact_max = exact_min + 8 * u
+            # 數學推演：精確 0 邊界 = 基準點 - (索引 * 完美間距)
+            exact_min = offset_0 - line_index * u_opt
+            exact_max = exact_min + 8 * u_opt
             
             return exact_min, exact_max
 
         # [步驟 C]：利用隔離區抓到的內線，精確反推出完美的上下左右外框
-        min_y, max_y = get_exact_edges_from_roi(proj_y, sy, by, by + bh)
-        min_x, max_x = get_exact_edges_from_roi(proj_x, sx, bx, bx + bw)
+        min_y, max_y = get_exact_edges_from_roi(proj_y, sy, by)
+        min_x, max_x = get_exact_edges_from_roi(proj_x, sx, bx)
+
+        # 萬一真的被炸到連 3 條內線都找不到，我們就退回使用大外框內縮 3% 的保險機制
+        if None in (min_x, max_x, min_y, max_y):
+            min_x, max_x = bx + bw * 0.03, bx + bw * 0.97
+            min_y, max_y = by + bh * 0.03, by + bh * 0.97
 
         approx = np.array([
             [[min_x, min_y]], [[min_x, max_y]], 
