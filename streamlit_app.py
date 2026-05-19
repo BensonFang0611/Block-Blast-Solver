@@ -87,7 +87,7 @@ def log_to_sheets(msg, img_url="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 💡 修改：辨識失敗對話框 ---
+# --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
@@ -101,8 +101,8 @@ def show_failure_dialog(eng, cv_img):
                 url = upload_to_imgbb(report_path)
                 log_to_sheets("系統自動回報：無法定位棋盤", url)
             
-            # 💡 徹底封印第一個視窗，並開啟感謝視窗
-            st.session_state.dialog_closed = True  # 👈 新增這行！防止主程式再次打開它
+            # 徹底封印第一個視窗，並開啟感謝視窗
+            st.session_state.dialog_closed = True  
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
@@ -110,20 +110,21 @@ def show_failure_dialog(eng, cv_img):
             
     with col2:
         if st.button("否，取消", use_container_width=True):
-            # 💡 徹底封印第一個視窗，並開啟感謝視窗
-            st.session_state.dialog_closed = True  # 👈 新增這行！防止主程式再次打開它
+            # 徹底封印第一個視窗，並開啟感謝視窗
+            st.session_state.dialog_closed = True  
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
             st.rerun()
-            
-# --- 💡 修改：第二個彈跳視窗 ---
+
+# --- 💡 第二個彈跳視窗：系統提示 ---
 @st.dialog("🔔 系統提示")
 def show_thanks_dialog(msg):
     st.write(msg)
     if st.button("確定", use_container_width=True):
+        # 關閉自己並重整，徹底清空畫面
         st.session_state.show_thanks_dialog = False
-        st.rerun() # 👈 新增這行！強制重整以關閉自己
+        st.rerun() 
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
@@ -132,11 +133,11 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
-    # 💡 只要上傳新檔案，就完全重置對話框的所有快取狀態
-    if "show_dialog" in st.session_state:
-        del st.session_state.show_dialog
-    if "dialog_closed" in st.session_state:
-        del st.session_state.dialog_closed
+    # 💡 只要上傳新檔案，就完全重置所有對話框的快取狀態，確保新圖能正常彈窗
+    if "last_file_name" not in st.session_state or st.session_state.last_file_name != file.name:
+        for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
+            st.session_state.pop(key, None)
+        st.session_state.last_file_name = file.name
 
     # ✨ 關鍵功能：User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
@@ -200,17 +201,14 @@ if file:
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
-    # 1️⃣ 處理第一個視窗：辨識失敗對話框
+    # ==========================================
+    # 💡 彈跳視窗互斥控制中心 (絕對不會撞車版)
+    # ==========================================
     if st.session_state.get("show_dialog", False):
         show_failure_dialog(eng, cv_img)
+    elif st.session_state.get("show_thanks_dialog", False): # 👈 改用 elif 確保絕對互斥！
+        show_thanks_dialog(st.session_state.get("thanks_msg", "")) # 👈 這裡必須正確取出文字！
 
-    # 2️⃣ 處理第二個視窗：感謝對話框
-        if st.session_state.get("show_thanks_dialog", False):
-            show_thanks_dialog(st.session_state)
-
-    if "show_thanks_dialog" in st.session_state and st.session_state.show_thanks_dialog == False:
-        del st.session_state.show_thanks_dialog
-        st.rerun() # 觸發重整，徹底關閉第二個視窗
 
 # --- 2. Feedback 回饋系統 ---
 st.markdown("---")
