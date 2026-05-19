@@ -13,9 +13,13 @@ class VisionEngine:
 
     def process(self):
         # 1. 影像預處理
-        gray = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 1)
+        hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
+        _, s, v = cv2.split(hsv)
+        v_channel = np.maximum.reduce([s, v])
+
+        # 3. 繼續你原本成功的二值化參數
+        blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
+        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
         
         # 初始化 Debug 圖
         self.img_debug = self.img_orig.copy()
@@ -28,7 +32,7 @@ class VisionEngine:
         for cnt in cnts:
             area = cv2.contourArea(cnt)
             # 過濾太小的雜訊（至少佔畫面 10%）
-            if area < (gray.shape[0] * gray.shape[1] * 0.1): continue
+            if area < (v_channel.shape[0] * v_channel.shape[1] * 0.1): continue
             
             approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
             if len(approx) == 4:
