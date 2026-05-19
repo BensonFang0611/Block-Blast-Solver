@@ -91,7 +91,7 @@ def log_to_sheets(msg, img_url="None"):
     except Exception as e:
         st.error(f"Sheet Error: {e}")
         return False
-# --- 💡 新增：辨識失敗的彈出詢問視窗 ---
+# --- 💡 修改：使用狀態控制的彈出詢問視窗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
@@ -110,12 +110,14 @@ def show_failure_dialog(eng, cv_img):
                 if log_to_sheets("系統自動回報：無法定位棋盤", url):
                     st.success("✅ 回報成功！感謝您的協助！")
             
-            # 💡 確保在上傳與提示結束後，重整網頁以關閉對話框
+            # 💡 重點：先關閉狀態開關，再重整網頁強制關閉視窗
+            st.session_state.show_dialog = False
             st.rerun()
             
     with col2:
         if st.button("否，取消", use_container_width=True):
-            # 💡 點擊取消直接重整網頁，立刻關閉對話框
+            # 💡 點擊取消一樣關閉狀態開關並重整
+            st.session_state.show_dialog = False
             st.rerun()
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
@@ -124,6 +126,9 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
+    # 💡 只要上傳新檔案，就清除對話框的快取狀態，確保下次失敗能正常彈出
+    if "show_dialog" in st.session_state:
+        del st.session_state.show_dialog
     # ✨ 關鍵功能：User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
         if log_to_sheets("User Visit"):
@@ -188,8 +193,14 @@ if file:
         #    st.image(eng.img_debug, channels="BGR", use_container_width=True)
     else:
             st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
-            # 觸發彈出視窗
-            show_failure_dialog(eng, cv_img)
+            
+            # 💡 第一次失敗時，初始化對話框狀態為 True
+            if "show_dialog" not in st.session_state:
+                st.session_state.show_dialog = True
+                
+            # 💡 只有在狀態為 True 時才跳出視窗
+            if st.session_state.show_dialog:
+                show_failure_dialog(eng, cv_img)
 
     # --- 2. Feedback 回饋系統 ---
     st.markdown("---")
