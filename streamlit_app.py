@@ -119,13 +119,19 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file:
-    # 💡 只要上傳新檔案，就清除對話框的快取狀態，確保下次失敗能正常彈出
-    if "show_dialog" in st.session_state:
-        del st.session_state.show_dialog
     # ✨ 關鍵功能：User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != file.name:
         if log_to_sheets("User Visit"):
             st.session_state.logged_file = file.name
+# 💡 【核心修正】把對話框搬到最外層獨立執行，不受 if/else 邏輯區塊的干擾
+if st.session_state.get("show_dialog", False):
+    show_failure_dialog(eng, cv_img)
+
+# 💡 當對話框內部把狀態改成 False 時，外面這裡主動捕捉，並徹底 rerun 刷新前端元件
+if "show_dialog" in st.session_state and st.session_state.show_dialog == False:
+    st.session_state.dialog_closed = True # 標記已經關閉過，避免網頁重整後又自動打開
+    del st.session_state.show_dialog
+    st.rerun()
 
     # 讀取影像
     raw_pil_img = Image.open(file)
@@ -187,19 +193,9 @@ if file:
     else:
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
         
-        # 💡 第一次失敗時，初始化對話框狀態為 True
-        if "show_dialog" not in st.session_state:
+        # 💡 只要辨識失敗，且我們沒有主動關閉過它，就開啟對話框狀態
+        if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
-            
-        # 💡 如果在對話框內被點了「是」或「否」，此時狀態會變成 False
-        # 我們在外面幫它呼叫 rerun，這時對話框就能 100% 被乾淨關閉！
-        if st.session_state.show_dialog == False:
-            del st.session_state.show_dialog  # 清除狀態，避免無限循環
-            st.rerun()
-            
-        # 💡 只有在狀態為 True 時才跳出視窗
-        if st.session_state.get("show_dialog", False):
-            show_failure_dialog(eng, cv_img)
 
     # --- 2. Feedback 回饋系統 ---
     st.markdown("---")
