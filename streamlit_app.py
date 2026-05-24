@@ -116,9 +116,9 @@ def show_thanks_dialog(msg):
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver (最近更新26/5/25)")
+st.title("🧩 Block Blast Solver ")
 
-file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
+file = st.file_uploader("📸 上傳截圖(最近更新26/5/25)", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
     # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
@@ -159,22 +159,12 @@ if file:
             canvas = eng.warp_orig.copy()
             u = 400 / 8
             
-            # 1. 先宣告兩個集合，用來統整所有步驟累積下來的消除行列
-            all_cl_rs = set()
-            all_cl_cs = set()
-            
-            # 2. 第一階段：只畫方塊本體，並收集所有消除的行列
+            # 依照時間軸依序繪製每一步的方塊與消除印記
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
-                # 紀錄這一步消除的行列
-                if cl_rs:
-                    all_cl_rs.update(cl_rs)
-                if cl_cs:
-                    all_cl_cs.update(cl_cs)
-                    
-                # 僅繪製方塊本體與格線
+                # 1. 繪製當下這步的方塊本體與格線
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
@@ -183,15 +173,16 @@ if file:
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
                             
-            # 3. 第二階段：在迴圈外部，統一將所有累積的消除區域轉為灰色半透明
-            if all_cl_rs or all_cl_cs:
-                overlay = canvas.copy()
-                for cr in all_cl_rs:
-                    cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-                for cc in all_cl_cs:
-                    cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                # 最後只做一次半透明融合，這樣灰色印記絕對會留在最上層
-                cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+                # 2. 當下結算消除印記 (這樣下一步的方塊就會正常蓋過它)
+                if cl_rs or cl_cs:
+                    overlay = canvas.copy()
+                    if cl_rs:
+                        for cr in cl_rs:
+                            cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+                    if cl_cs:
+                        for cc in cl_cs:
+                            cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                    cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
                 
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
