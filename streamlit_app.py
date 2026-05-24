@@ -163,31 +163,37 @@ if file:
             canvas = eng.warp_orig.copy()
             u = 400 / 8
             
-            # 💡 預先給定空清單，防止第 0 步迴圈沒跑導致 NameError
-            cl_rs, cl_cs = [], []
-            
-            for s in range(idx):
-                p_idx, row, col, cl_rs, cl_cs = sol[s]
-                # 💡 修正錯誤：補回這行被截斷的陣列索引！
-                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3] 
-                
-                # 繪製方塊本體與格線
-                for pr in range(len(p)):
-                    for pc in range(len(p[0])):
-                        if p[pr][pc]:
-                            x1, y1 = int((col+pc)*u), int((row+pr)*u)
-                            x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
-                            
-            # 繪製消除效果 (半透明融合)
-            overlay = canvas.copy()
-            for cr in (cl_rs or []):
-                cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-            for cc in (cl_cs or []):
-                cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                
-            cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+            # 1. 先宣告兩個集合，用來統整所有步驟累積下來的消除行列
+all_cl_rs = set()
+all_cl_cs = set()
+
+# 2. 第一階段：只畫方塊本體，並收集所有消除的行列
+for s in range(idx):
+    p_idx, row, col, cl_rs, cl_cs = sol[s]
+    p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
+    
+    # 紀錄這一步消除的行列
+    if cl_rs: all_cl_rs.update(cl_rs)
+    if cl_cs: all_cl_cs.update(cl_cs)
+    
+    # 僅繪製方塊本體與格線
+    for pr in range(len(p)):
+        for pc in range(len(p[0])):
+            if p[pr][pc]:
+                x1, y1 = int((col+pc)*u), int((row+pr)*u)
+                x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
+
+# 3. 第二階段：在迴圈外部，統一將所有累積的消除區域轉為灰色半透明
+if all_cl_rs or all_cl_cs:
+    overlay = canvas.copy()
+    for cr in all_cl_rs:
+        cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+    for cc in all_cl_cs:
+        cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+    # 最後只做一次半透明融合，這樣灰色印記絕對會留在最上層
+    cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("此盤面無解:..)")
