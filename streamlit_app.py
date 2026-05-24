@@ -45,7 +45,6 @@ def get_combined_pieces_image(detected_pieces):
     h, w, c = piece_imgs[0].shape
     gap_width = 15
     black_gap = np.zeros((h, gap_width, c), dtype=np.uint8)
-    
     stack_list = []
     for i, img in enumerate(piece_imgs):
         stack_list.append(img)
@@ -73,7 +72,6 @@ def log_to_sheets(msg, img_url="None"):
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         new_entry = pd.DataFrame([{"Timestamp": now_tw, "Comment": msg, "Image_Link": img_url}])
-        
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=updated_df)
@@ -88,23 +86,21 @@ def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("是，回報錯誤", type="primary", use_container_width=True):
+        if st.button("局，回報錯誤", type="primary", use_container_width=True):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
                 report_path = "temp/feedback_auto.jpg"
                 cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
                 url = upload_to_imgbb(report_path)
                 log_to_sheets("系統自動回報：無法定位棋盤", url)
-            
-            st.session_state.dialog_closed = True  
-            st.session_state.show_dialog = False
-            st.session_state.show_thanks_dialog = True
-            st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
-            st.rerun()
-            
+                st.session_state.dialog_closed = True
+                st.session_state.show_dialog = False
+                st.session_state.show_thanks_dialog = True
+                st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
+                st.rerun()
     with col2:
         if st.button("否，取消", use_container_width=True):
-            st.session_state.dialog_closed = True  
+            st.session_state.dialog_closed = True
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
             st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
@@ -116,7 +112,7 @@ def show_thanks_dialog(msg):
     st.write(msg)
     if st.button("確定", use_container_width=True):
         st.session_state.show_thanks_dialog = False
-        st.rerun() 
+        st.rerun()
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
@@ -132,13 +128,13 @@ if file is None:
 if file:
     # 取得這次上傳的「唯一識別碼」
     current_file_id = getattr(file, "file_id", str(file.size) + file.name)
-
+    
     # 💡 防呆機制 2：只要是新的上傳動作，就完全解開封印重置對話框
     if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
         for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
             st.session_state.pop(key, None)
         st.session_state.last_file_id = current_file_id
-
+        
     # ✨ User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
         if log_to_sheets("User Visit"):
@@ -147,14 +143,14 @@ if file:
     # 讀取影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
-
+    
     # 初始化辨識引擎
     eng = VisionEngine(cv_img)
-    
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
+        
         if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
@@ -164,36 +160,39 @@ if file:
             u = 400 / 8
             
             # 1. 先宣告兩個集合，用來統整所有步驟累積下來的消除行列
-all_cl_rs = set()
-all_cl_cs = set()
-
-# 2. 第一階段：只畫方塊本體，並收集所有消除的行列
-for s in range(idx):
-    p_idx, row, col, cl_rs, cl_cs = sol[s]
-    p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
-    
-    # 紀錄這一步消除的行列
-    if cl_rs: all_cl_rs.update(cl_rs)
-    if cl_cs: all_cl_cs.update(cl_cs)
-    
-    # 僅繪製方塊本體與格線
-    for pr in range(len(p)):
-        for pc in range(len(p[0])):
-            if p[pr][pc]:
-                x1, y1 = int((col+pc)*u), int((row+pr)*u)
-                x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
-                cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
-
-# 3. 第二階段：在迴圈外部，統一將所有累積的消除區域轉為灰色半透明
-if all_cl_rs or all_cl_cs:
-    overlay = canvas.copy()
-    for cr in all_cl_rs:
-        cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-    for cc in all_cl_cs:
-        cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-    # 最後只做一次半透明融合，這樣灰色印記絕對會留在最上層
-    cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+            all_cl_rs = set()
+            all_cl_cs = set()
+            
+            # 2. 第一階段：只畫方塊本體，並收集所有消除的行列
+            for s in range(idx):
+                p_idx, row, col, cl_rs, cl_cs = sol[s]
+                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
+                
+                # 紀錄這一步消除的行列
+                if cl_rs:
+                    all_cl_rs.update(cl_rs)
+                if cl_cs:
+                    all_cl_cs.update(cl_cs)
+                    
+                # 僅繪製方塊本體與格線
+                for pr in range(len(p)):
+                    for pc in range(len(p[0])):
+                        if p[pr][pc]:
+                            x1, y1 = int((col+pc)*u), int((row+pr)*u)
+                            x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
+                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
+                            
+            # 3. 第二階段：在迴圈外部，統一將所有累積的消除區域轉為灰色半透明
+            if all_cl_rs or all_cl_cs:
+                overlay = canvas.copy()
+                for cr in all_cl_rs:
+                    cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+                for cc in all_cl_cs:
+                    cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                # 最後只做一次半透明融合，這樣灰色印記絕對會留在最上層
+                cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+                
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("此盤面無解:..)")
@@ -203,21 +202,20 @@ if all_cl_rs or all_cl_cs:
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_piece_img is not None:
             st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
-
+            
     else:
         # ❌ 辨識失敗
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
-    # ==========================================
-    # 💡 彈跳視窗互斥控制中心
-    # ==========================================
-    if st.session_state.get("show_dialog", False):
-        show_failure_dialog(eng, cv_img)
-    elif st.session_state.get("show_thanks_dialog", False):
-        show_thanks_dialog(st.session_state.get("thanks_msg", ""))
-
+# ==========================================
+# 💡 彈跳視窗互斥控制中心
+# ==========================================
+if st.session_state.get("show_dialog", False):
+    show_failure_dialog(eng, cv_img)
+elif st.session_state.get("show_thanks_dialog", False):
+    show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
 # --- 2. Feedback 回饋系統 ---
 st.markdown("---")
