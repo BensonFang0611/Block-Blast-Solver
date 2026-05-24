@@ -3,34 +3,67 @@ import numpy as np
 import copy
 
 class VisionEngine:
-    def __init__(self, cv_img):
+    def __init__(self, cv_img, base_pieces=None):
         self.img_orig = cv_img
         self.img_debug = None           # 顏色判定 Debug 專用圖
         self.grid_state = [[0]*8 for _ in range(8)]
         self.detected_pieces = []
         self.warp_orig = None
-        self.piece_scale = 0.50
+        self.piece_scale = 0.46
+        
+        # 💡 自動生成「所有旋轉角度的合法形狀與尺寸」
+        self.legal_shapes = set()       # 儲存 (rows, cols) 尺寸
+        self.legal_grids = []           # 儲存旋轉後的二維矩陣結構
+        self._generate_rotated_pieces(base_pieces)
 
+    def _generate_rotated_pieces(self, base_pieces):
+        """ 智慧核心：傳入基本方塊原型，自動衍生出 4 個旋轉角度(0, 90, 180, 270) 的特徵 """
+        if not base_pieces:
+            # 如果使用者沒設定，預設提供標準益智遊戲方塊原型
+            base_pieces = [
+                [[1]],                                  # 1x1 方塊
+                [[1, 1]],                               # 1x2 長條
+                [[1, 1, 1]],                            # 1x3 長條
+                [[1, 1, 1, 1]],                         # 1x4 長條
+                [[1, 1], [1, 1]],                       # 2x2 正方形
+                [[1, 1, 1], [1, 1, 1], [1, 1, 1]],       # 3x3 大正方形
+                [[1, 1, 1], [0, 1, 0]],                 # T 型方塊
+                [[1, 1, 1], [1, 0, 0]],                 # L 型方塊
+                [[1, 1], [1, 1], [1, 1]]                # 2x3 實心矩形
+            ]
+            
+        for piece in base_pieces:
+            arr = np.array(piece, dtype=np.uint8)
+            # 依序旋轉 0, 90, 180, 270 度
+            for k in range(4):
+                rotated = np.rot90(arr, k)
+                r_rows, r_cols = rotated.shape
+                
+                # 將尺寸加入集合 (自動去重)
+                self.legal_shapes.add((r_rows, r_cols))
+                
+                # 將矩形結構轉回標準 Python list 儲存
+                grid_list = rotated.tolist()
+                if grid_list not in self.legal_grids:
+                    self.legal_grids.append(grid_list)
     def process(self):
         # ==========================================
         # 1. 影像預處理 (萃取特徵與二值化)
         # ==========================================
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
-        _, _, v_channel = cv2.split(hsv)
+        h_channel , s_channel, v_channel = cv2.split(hsv)
         blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
-        kernel_v = np.ones((11, 11), np.uint8)
-        thresh_v = cv2.morphologyEx(blur, cv2.MORPH_OPEN, kernel_v)
-        thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        thresh_v = cv2.adaptiveThreshold(thresh_v, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
-        piece_thresh = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        kernel_g = np.ones((3, 3), np.uint8)
+        thresh_g = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_OPEN, kernel_g)
+        thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, kernel_g)
+        self.grid_state = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        
         self.img_debug = self.img_orig.copy()
-
-        cv2.imshow("thresh", cv2.resize(thresh_v, (0, 0), fx=0.5, fy=0.5))
-
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
-        board_thresh = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+        board_thresh = cv2.morphologyEx(self.grid_state, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
         cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts: return False
 
@@ -57,16 +90,12 @@ class VisionEngine:
         cv2.rectangle(self.img_debug, (sx, sy), (sx + sw, sy + sh), (255, 50, 50), 2)
 
         # 提取乾淨的水平與垂直線
-        thresh = cv2.adaptiveThreshold(v_channel, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
+        thresh_vch = cv2.adaptiveThreshold(v_channel, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
         kernel_h, kernel_v = np.ones((1, 101), np.uint8), np.ones((101, 1), np.uint8)
-        thresh_h = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
+        thresh_h = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
-        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
-        thresh_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
+        thresh_v = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
-        # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
-        # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
         proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
         proj_x = np.sum(thresh_v[sy:sy+sh, sx:sx+sw], axis=0) / 255
@@ -122,9 +151,9 @@ class VisionEngine:
             for p_roi in clean_peaks:
                 p_global = int(round(p_roi + offset_start)) 
                 if is_horizontal: 
-                    cv2.line(self.img_debug, (sx, p_global), (sx + sw // 2, p_global), color_centroid, 1, cv2.LINE_AA)
+                    cv2.line(self.img_debug, (sx, p_global), (sx + sw // 2, p_global), color_centroid, 2, cv2.LINE_AA)
                 else: 
-                    cv2.line(self.img_debug, (p_global, sy), (p_global, sy + sh // 2), color_centroid, 1, cv2.LINE_AA)
+                    cv2.line(self.img_debug, (p_global, sy), (p_global, sy + sh // 2), color_centroid, 2, cv2.LINE_AA)
 
             # [步驟 2]：線性迴歸擬合 (讓所有保留下來的線條共同決定出最完美的 u_opt)
             u_opt, offset_0_roi = np.polyfit(indices, clean_peaks, 1)
@@ -150,13 +179,11 @@ class VisionEngine:
             return exact_min, exact_max
 
         # ==========================================
-        # 呼叫與保險機制 (移除 cv2.imshow 彈出視窗)
+        # 呼叫與保險機制
         # ==========================================
         # 分別解析 Y 軸與 X 軸 (參數減少，不再傳入 img_roi)
         min_y, max_y = get_exact_edges_from_roi_debug(proj_y, sy, by, is_horizontal=True)
         min_x, max_x = get_exact_edges_from_roi_debug(proj_x, sx, bx, is_horizontal=False)
-
-        # 💡 [移除]：刪除了 cv2.imshow("Centroid(Yellow) vs LeastSquares(Red)", ...)
 
         # 萬一真的被炸到連 3 條內線都找不到，保險機制啟動 (往內縮 3%)
         if None in (min_x, max_x, min_y, max_y):
@@ -171,47 +198,55 @@ class VisionEngine:
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
 
         # ==========================================
-        # 3. 採樣 8x8 棋盤底色（直接取原圖 V 通道法）
+        # 3. 💡【超簡化改法】：直接拿原本的二值化圖與算出的坐標算白色 % 數
         # ==========================================
-        warp_hsv = cv2.cvtColor(self.warp_orig, cv2.COLOR_BGR2HSV)
-        u = 400 / 8
-        centers_v = []
         for r in range(8):
             for c in range(8):
-                cx, cy = int((c + 0.5) * u), int((r + 0.5) * u)
-                roi_v = warp_hsv[cy-2:cy+2, cx-2:cx+2, 2]
-                centers_v.append(np.median(roi_v) if roi_v.size > 0 else 0)
-
-        base_bg_v = min(centers_v)
-        tolerance = 255 * 0.03
-        for r in range(8):
-            for c in range(8):
-                is_p = centers_v[r*8+c] > (base_bg_v + tolerance)
+                # 取得格子採樣中心點範圍的四個頂點坐標 (縮小範圍避免吸到棋盤格線)
+                poly_pts = self.get_cell_poly_sampling(pts1, r, c, 0.08, 0.92).astype(np.int32)
+                
+                # 直接算出能完全包覆這個多邊形採樣點的最小矩形範圍 (Bounding Box)
+                gx, gy, gw, gh = cv2.boundingRect(poly_pts)
+                
+                # 確保切片範圍不超出圖片邊界
+                gy_s, gy_e = max(0, gy), min(thresh_g.shape[0], gy + gh)
+                gx_s, gx_e = max(0, gx), min(thresh_g.shape[1], gx + gw)
+                
+                # 直接在原本的二值化全圖 (thresh_g) 上切片取出這一小塊
+                patch_thresh = thresh_g[gy_s:gy_e, gx_s:gx_e]
+                
+                # 直覺計算：白色像素佔整格區域的比例
+                white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 0
+                
+                # 門檻值設定：白色大於 5% 判定為有棋子
+                is_p = white_ratio > 0.05
                 self.grid_state[r][c] = 1 if is_p else 0
-                cv2.polylines(self.img_debug, [self.get_cell_poly(pts1, r, c)], True, (80,80,80), 1)
-                color_fill = (255,255,255) if is_p else (120,120,120)
-                cv2.fillPoly(self.img_debug, [self.get_cell_poly_sampling(pts1, r, c, 0.4, 0.6)], color_fill)
+                
+                # 繪製 Debug 框線與實心填充
+                border_color = (0,255,0) if is_p else (120,120,120)
+                cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
 
         # ==========================================
-        # 4. 全域採樣待放區背景色 (含安全防呆)
+        # 4. 全域採樣待放區 (避開廣告)
         # ==========================================
         img_h = self.img_orig.shape[0]
         bottom_y = int(max(pts1[:, 1]))
-        ay_s, ay_e = bottom_y + 40, int(img_h * 0.88)
-
-        if ay_s >= ay_e:
-            ay_e = img_h
-            if ay_s >= ay_e: return True 
+        ay_s, ay_e = bottom_y + 40, int(img_h * 0.82)
+        if ay_s >= ay_e: return True 
         
-        piece_area_mask = piece_thresh[ay_s:ay_e, :]
+        piece_area_mask = thresh_vch[ay_s:ay_e, :]
         piece_area_color = self.img_orig[ay_s:ay_e, :]
         bg_mask = cv2.bitwise_not(piece_area_mask)
         bg_mask = cv2.erode(bg_mask, np.ones((5, 5), np.uint8), iterations=2)
         bg_pixels = piece_area_color[bg_mask == 255]
         global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 100 else piece_area_color[5, 5]
 
+        # 計算全域背景色在 HSV 空間中的 H 值，當作 H 通道過濾的基準
+        bg_hsv = cv2.cvtColor(np.uint8([[global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        global_bg_h = bg_hsv[0]
+
         # ==========================================
-        # 5. 解析待放方塊
+        # 5. 解析待放方塊 (四通道智慧切換防禦)
         # ==========================================
         p_cnts, _ = cv2.findContours(piece_area_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates_p = []
@@ -224,42 +259,136 @@ class VisionEngine:
         final_pieces = sorted(candidates_p, key=lambda p: p[0])[:3]
         p_unit = orig_unit * self.piece_scale
         self.detected_pieces = []
+        
         for x, ay, pw, ph, _ in final_pieces:
-            mask = piece_thresh[ay:ay+ph, x:x+pw]
-            color_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            self.detected_pieces.append(self.parse_piece_color_only(mask, color_roi, pw, ph, p_unit, x, ay, global_bg_color))
+            # 準備各通道切片原料
+            mask_roi = thresh_g[ay:ay+ph, x:x+pw]
+            bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
+            h_roi = h_channel[ay:ay+ph, x:x+pw]
+            s_roi = s_channel[ay:ay+ph, x:x+pw]
+            v_roi = v_channel[ay:ay+ph, x:x+pw]
+            
+            # 呼叫終極多通道辨識核心
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, p_unit, x, ay, global_bg_color, global_bg_h)
+            self.detected_pieces.append(parsed_grid)
 
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
         return True
 
-    def parse_piece_color_only(self, mask, color_roi, pw, ph, unit, ox, oy, bg_color):
-        nz = cv2.findNonZero(mask)
-        if nz is None: return [[1]]
+    # ===================================================
+    # 智慧辨識核心：引入「背景差值大框校正」與「四通道相對對比」
+    # ===================================================
+    def parse_piece_multi_channel(self, mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, unit, ox, oy, bg_color, bg_h):
+        # ─── 💡 【步驟 1：大框校正防禦機制（和背景做比較）】 ───
+        # 原本直接用 mask_roi 會被 adaptiveThreshold 的雜訊干擾，導致外框偏大
+        # 這裡我們直接用「當前 ROI 彩色圖與背景的 RGB 距離」做出一個純淨的方塊實體能量圖
+        diff_map = np.linalg.norm(bgr_roi.astype(np.float32) - bg_color.astype(np.float32), axis=2).astype(np.uint8)
+        
+        # 只要跟背景顏色差距大於 30 的，才認定是真正的方塊肉身 (排除微小背景條紋雜訊)
+        _, pure_piece_mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
+        
+        # 利用這個跟背景比較後「洗乾淨」的遮罩重新抓取左上角起點
+        nz = cv2.findNonZero(pure_piece_mask)
+        
+        # 保險機制：萬一洗得太乾淨什麼都不剩，才退回使用原本的 mask_roi
+        if nz is None:
+            nz = cv2.findNonZero(mask_roi)
+            if nz is None: return [[1]]
+
+        # 這裡拿到的 (mx, my) 就是徹底逼近方塊真實肉身、不受雜訊干擾的「極精準左上角」！
         mx, my, mw, mh = cv2.boundingRect(nz)
         
-        cols, rows = max(1, min(5, int(round(mw/unit)))), max(1, min(5, int(round(mh/unit))))
-        col_b, row_b = np.linspace(0, mw, cols+1).astype(int), np.linspace(0, mh, rows+1).astype(int)
-        grid = [[0]*cols for _ in range(rows)]
+        # ─── 💡 【步驟 2：幾何行列數推算】 ───
+        cols = max(1, min(5, int(round(mw / unit))))
+        rows = max(1, min(5, int(round(mh / unit))))
+        cols, rows = max(1, min(5, cols)), max(1, min(5, rows))
 
-        cv2.circle(self.img_debug, (ox + 10, oy - 15), 6, bg_color.tolist(), -1)
-        cv2.circle(self.img_debug, (ox + 10, oy - 15), 6, (255,255,255), 1)
+        # 事前準備：設定背景特徵基準點
+        bg_hsv = cv2.cvtColor(np.uint8([[bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        bg_s_base = bg_hsv[1]
+        bg_v_std_base = 2.0 
 
-        for r in range(rows):
-            for c in range(cols):
-                c_s, c_e, r_s, r_e = col_b[c], col_b[c+1], row_b[r], row_b[r+1]
-                cx_s, cx_e = c_s + int(0.4*(c_e-c_s)), c_s + int(0.6*(c_e-c_s))
-                cy_s, cy_e = r_s + int(0.4*(r_e-r_s)), r_s + int(0.6*(r_e-r_s))
+        # 四道相對對比防線
+        channels_to_try = ['v_std_diff', 's_diff', 'h_diff', 'bgr_color']
+        final_grid = None
+        
+        for channel in channels_to_try:
+            grid = [[0]*cols for _ in range(rows)]
+            has_pieces = False
+
+            for r in range(rows):
+                for c in range(cols):
+                    # 基於極精準的左上角起點，以絕對正方形步長開格子
+                    c_s = int(mx + c * unit)
+                    c_e = int(mx + (c + 1) * unit)
+                    r_s = int(my + r * unit)
+                    r_e = int(my + (r + 1) * unit)
+                    
+                    c_e = min(c_e, bgr_roi.shape[1])
+                    r_e = min(r_e, bgr_roi.shape[0])
+                    
+                    # 取中央 50% 核心純淨採樣區
+                    cx_s, cx_e = c_s + int(0.25 * (c_e - c_s)), c_s + int(0.75 * (c_e - c_s))
+                    cy_s, cy_e = r_s + int(0.25 * (r_e - r_s)), r_s + int(0.75 * (r_e - r_s))
+                    
+                    if channel == 'v_std_diff':
+                        patch = v_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                        cell_v_std = np.std(patch) if patch.size > 0 else 0
+                        is_p = (cell_v_std - bg_v_std_base) > 3.5
+                        
+                    elif channel == 's_diff':
+                        patch = s_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                        if patch.size > 0:
+                            cell_s_median = np.median(patch)
+                            is_p = abs(cell_s_median - bg_s_base) > 15
+                        else: is_p = False
+                        
+                    elif channel == 'h_diff':
+                        patch = h_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                        if patch.size > 0:
+                            h_median = np.median(patch)
+                            h_diff_val = min(abs(h_median - bg_h), 180 - abs(h_median - bg_h))
+                            is_p = h_diff_val > 8
+                        else: is_p = False
+                        
+                    else:
+                        patch = bgr_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                        is_p = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color) > 40 if patch.size > 0 else False
+                    
+                    if is_p:
+                        grid[r][c] = 1
+                        has_pieces = True
+
+            # 智慧幾何旋轉角度過濾
+            if has_pieces:
+                if grid in self.legal_grids:
+                    final_grid = grid
+                    break
+        
+        if final_grid is None:
+            final_grid = grid
+
+        # ==========================================
+        # 視覺化邊框繪製（完美對齊校正後的精準左上角）
+        # ==========================================
+        for r in range(len(final_grid)):
+            for c in range(len(final_grid[0])):
+                c_s = int(mx + c * unit)
+                c_e = int(mx + (c + 1) * unit)
+                r_s = int(my + r * unit)
+                r_e = int(my + (r + 1) * unit)
                 
-                patch = color_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
-                dist = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color) if patch.size > 0 else 0
-                is_p = dist > 40
-                grid[r][c] = 1 if is_p else 0
-
-                sx, sy, ex, ey = ox+mx+c_s, oy+my+r_s, ox+mx+c_e, oy+my+r_e
+                sx, sy, ex, ey = ox + c_s, oy + r_s, ox + c_e, oy + r_e
                 cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), (80,80,80), 1)
-                fill_color = (255,255,255) if is_p else (120,120,120)
-                cv2.rectangle(self.img_debug, (ox+mx+cx_s, oy+my+cy_s), (ox+mx+cx_e, oy+my+cy_e), fill_color, -1)
-        return grid
+                
+                is_p = final_grid[r][c] == 1
+                border_color = (255,255,255) if is_p else (120,120,120)
+                
+                px_s, px_e = c_s + int(0.25 * (c_e - c_s)), c_s + int(0.75 * (c_e - c_s))
+                py_s, py_e = r_s + int(0.25 * (r_e - r_s)), r_s + int(0.75 * (r_e - r_s))
+                cv2.rectangle(self.img_debug, (ox + px_s, oy + py_s), (ox + px_e, oy + py_e), border_color, 3)
+
+        return final_grid
 
     # --- 座標變換工具 ---
     def lerp(self, p1, p2, t): return p1 + (p2 - p1) * t
@@ -317,4 +446,4 @@ class LogicSolver:
         for i in rs: ng[i] = [0]*8
         for j in cs:
             for i in range(8): ng[i][j] = 0
-        return ng
+        return ng 
