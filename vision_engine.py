@@ -21,14 +21,16 @@ class VisionEngine:
         kernel_v = np.ones((11, 11), np.uint8)
         thresh_v = cv2.morphologyEx(blur, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        thresh = cv2.adaptiveThreshold(thresh_v, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
-        piece_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        thresh_v = cv2.adaptiveThreshold(thresh_v, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
+        piece_thresh = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         self.img_debug = self.img_orig.copy()
+
+        cv2.imshow("thresh", cv2.resize(thresh_v, (0, 0), fx=0.5, fy=0.5))
 
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
-        board_thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+        board_thresh = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
         cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts: return False
 
@@ -55,11 +57,14 @@ class VisionEngine:
         cv2.rectangle(self.img_debug, (sx, sy), (sx + sw, sy + sh), (255, 50, 50), 2)
 
         # 提取乾淨的水平與垂直線
-        kernel_h, kernel_v = np.ones((1, 51), np.uint8), np.ones((51, 1), np.uint8)
+        thresh = cv2.adaptiveThreshold(v_channel, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 2)
+        kernel_h, kernel_v = np.ones((1, 101), np.uint8), np.ones((101, 1), np.uint8)
         thresh_h = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
+        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
         thresh_v = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.5, fy=0.5))
         # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
         # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
@@ -70,9 +75,7 @@ class VisionEngine:
             """ 質心平均 + 線性迴歸最優擬合 (保留所有線條，交由數學平衡) """
             if len(projection) == 0: return None, None
             
-            threshold = np.max(projection) * 0.50 
-            valid_coords = np.where(projection > threshold)[0]
-            if len(valid_coords) < 3: return None, None
+            valid_coords = np.where(projection > 0)[0]
 
             # [步驟 1A]：初次質心平均
             peaks_roi = []
