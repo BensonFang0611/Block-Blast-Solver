@@ -120,7 +120,7 @@ def show_thanks_dialog(msg):
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver ")
+st.title("🧩 Block Blast Solver (最近更新26/5/25)")
 
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
