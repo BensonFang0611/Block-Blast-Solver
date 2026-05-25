@@ -417,75 +417,80 @@ class VisionEngine:
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
         """ 
-        Streamlit 專用主接口：
-        完全解放方塊順序，允許 AI 任意調換 [0,1,2] 的先後順序，找出全消最優解！
+        終極主接口：完全強迫拔除所有 return 阻斷，保證窮舉全盤面！
         """
-        if path is None:
-            # 這是來自 streamlit_app.py 的第一層呼叫
-            best_path, _ = self._solve_core(grid, pieces, p_indices, [])
-            # 💡 只回傳純粹的步驟清單（長度為3），Streamlit 讀取完會精準顯示第 0~3 步
-            return best_path
+        self.global_best_path = None
+        self.global_min_perimeter = float('inf')
+        self.total_scanned_solutions = 0 # 記錄總共找到了幾組「可完整放下三個方塊」的合法解
         
-        return self._solve_core(grid, pieces, p_indices, path)
+        # 轉成標準的 0-1 矩陣，避免外部分析時物件型態污染
+        clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
+        
+        print("\n🤖 [AI 評估日誌]：開始全域窮舉所有排列組合...")
+        
+        # 啟動深度優先搜尋
+        self._solve_dfs(clean_grid, pieces, p_indices, [])
+        
+        print(f"📊 [AI 評估結束]：全域共掃描到 {self.total_scanned_solutions} 組可行解。")
+        if self.global_best_path is not None:
+            print(f"🏆 最終篩選出的全域「最小內部周長」分數為: {self.global_min_perimeter}")
+        else:
+            print("❌ 警告：全域搜尋完畢，找不到任何一組可以完全放下三個方塊的解。")
+            
+        return self.global_best_path
 
-    def _solve_core(self, grid, pieces, p_indices, path):
-        # 💡 【基底條件】：當 3 個方塊都依序模擬擺放，且各自的消行/消列都執行完畢後
-        if not p_indices: 
-            # 完全符合要求：直接計算這個最終殘局盤面的「純粹內部暴露面（分數）」並回傳
-            return path, self.get_perimeter(grid)
+    def _solve_dfs(self, grid, pieces, p_indices, current_path):
+        # 💡 基底條件：當 3 顆方塊都成功放下了，這是一組「完整走完」的解
+        if not p_indices:
+            self.total_scanned_solutions += 1
+            score = self.get_perimeter(grid)
+            
+            # 【核心 debug 印出】：讓你看清楚它到底有沒有把所有解拿出來秤重！
+            # print(f"  -> 找到第 {self.total_scanned_solutions} 組可行解，最終殘局內部周長 = {score}")
+            
+            # 只有當分數嚴格小於全域最優解時才更新
+            if score < self.global_min_perimeter:
+                self.global_min_perimeter = score
+                self.global_best_path = list(current_path)
+            return
 
-        best_path = None
-        min_perimeter = float('inf') 
-
-        # 全域窮舉 6 種擺放順序（例如 0->1->2, 2->1->0...）
+        # 全域窮舉剩餘可用的方塊
         for i in p_indices:
             p = pieces[i]
             p_rows = len(p)
             p_cols = len(p[0])
             
-            # 幾何剪枝：限制迴圈邊界，Streamlit 執行超快不卡死
+            # 遍歷 8x8 棋盤的每一個角落
             for r in range(9 - p_rows):
                 for c in range(9 - p_cols):
                     
-                    # 快速碰撞檢查
+                    # 碰撞檢查
                     if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
                         
-                        # 使用高速切片複製，擺脫極慢的 deepcopy
+                        # 模擬放置：建立乾淨的區域複製品
                         ng = [row[:] for row in grid]
-                        
-                        # 1. 實體放置當前這顆方塊
                         for pr in range(p_rows):
                             for pc in range(p_cols):
                                 if p[pr][pc]:
                                     ng[r+pr][c+pc] = 1
                         
-                        # 2. 即時計算當下這步觸發的消行與消列
+                        # 計算並物理執行消除
                         rs = [idx for idx, row in enumerate(ng) if all(row)]
                         cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
                         
-                        # 3. 實體執行物理消除（變回 0）
                         for row_idx in rs: ng[row_idx] = [0]*8
                         for col_idx in cs:
                             for row_idx in range(8): ng[row_idx][col_idx] = 0
                         
-                        # 記錄這一步的擺放細節 (包含它是哪個方塊 i)
-                        current_placement = (i, r, c, rs, cs)
+                        # 封裝當前步驟快照
+                        placement = (i, r, c, rs, cs)
                         
-                        # 遞迴向下搜尋：從剩餘的 p_indices 中排除當前已使用的 i
-                        res_path, res_perimeter = self._solve_core(
-                            ng, pieces, [idx for idx in p_indices if idx != i], 
-                            path + [current_placement]
-                        )
-                        
-                        # 💡 【核心修改點】：尋找能讓最終殘局內部空洞暴露面最小（全消 = 0）的完美神解！
-                        if res_path is not None and res_perimeter < min_perimeter:
-                            min_perimeter = res_perimeter
-                            best_path = res_path
-                                
-        return best_path, min_perimeter
+                        # 推進下一層遞迴
+                        current_path.append(placement)
+                        self._solve_dfs(ng, pieces, [idx for idx in p_indices if idx != i], current_path)
+                        current_path.pop() # 回溯，清空路徑供下一個迴圈使用
 
     def can_place_fast(self, grid, p, r, c, p_rows, p_cols):
-        """ 極速版碰撞偵測 """
         for pr in range(p_rows):
             for pc in range(p_cols):
                 if p[pr][pc] and grid[r+pr][c+pc]:
@@ -494,24 +499,16 @@ class LogicSolver:
 
     def get_perimeter(self, grid):
         """ 
-        💡 【嚴格遵照規格改寫】：計算 8x8 盤面中「既沒有方塊也沒有牆壁」的暴露面分數
+        精準計算 8x8 盤面內部的空洞暴露面（不計邊牆）
         """
         perimeter = 0
         for r in range(8):
             for c in range(8):
                 if grid[r][c] == 1:
-                    # 門檻檢查：四面如果「有格子（不是牆壁）」且「格子是 0（沒有方塊）」才 +1
-                    # 滿足此條件代表該面暴露於盤面內部的純空洞中
-                    
-                    # 檢查上方
                     if r > 0 and grid[r-1][c] == 0: perimeter += 1
-                    # 檢查下方
                     if r < 7 and grid[r+1][c] == 0: perimeter += 1
-                    # 檢查左方
                     if c > 0 and grid[r][c-1] == 0: perimeter += 1
-                    # 檢查右方
                     if c < 7 and grid[r][c+1] == 0: perimeter += 1
-                    
         return perimeter
 
     def can_place(self, grid, p, r, c):
