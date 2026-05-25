@@ -192,7 +192,7 @@ if file:
         st.markdown("---")
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_piece_img is not None:
-            st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
+            st.image(combined_piece_img, caption="偵測到的待放方塊", channels="BGR", use_container_width=True)
             
     else:
         # ❌ 辨識失敗
