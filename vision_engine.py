@@ -412,45 +412,46 @@ class VisionEngine:
         return rect
 
 # =================================================================
-# 🚀 【終極高速周長優化版】：全域搜尋最小周長解，完美相容原版前端
+# 🚀 【終極高速周長優化版】：全域搜尋「周長-消除權橫大師」解題引擎
 # =================================================================
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
         """ 
         Streamlit 專用主接口：
-        保持與舊版完全相同的呼叫參數，但在內部執行全域最小周長（最密實盤面）最佳化搜尋。
+        保持與舊版完全相同的呼叫參數，但在內部執行（周長 + 消除獎勵）的全域最優化搜尋。
         """
         if path is None:
-            # 這是來自 streamlit_app.py 的第一層呼叫
-            best_path, _ = self._solve_core(grid, pieces, p_indices, [])
-            # 💡 【核心修正】：只回傳純粹的解法步驟清單（3步），長度回歸正常，Streamlit 絕不翻車！
+            # 💡 傳入初始累積消除數為 0
+            best_path, _ = self._solve_core(grid, pieces, p_indices, [], 0)
             return best_path
         
-        # 萬一有其他地方帶有 path 遞迴呼叫，直接導向核心
-        return self._solve_core(grid, pieces, p_indices, path)
+        return self._solve_core(grid, pieces, p_indices, path, 0)
 
-    def _solve_core(self, grid, pieces, p_indices, path):
-        # 基底條件：當所有待放方塊都順利排放完畢時
+    def _solve_core(self, grid, pieces, p_indices, path, accumulated_cleared=0):
+        # 💡 基底條件：當所有待放方塊都順利排放完畢時
         if not p_indices: 
-            return path, self.get_perimeter(grid)
+            # 終極公式：周長 - (消除行數 * 32)
+            # 每消除一行給予 32 分巨大獎勵，完美抵消並超越因消行而產生的 jagged canyon（鋸齒峽谷周長增加）
+            final_score = self.get_perimeter(grid) - (accumulated_cleared * 32)
+            return path, final_score
 
         best_path = None
-        min_perimeter = float('inf') 
+        min_score = float('inf') 
 
-        # 遍歷目前剩餘的所有方塊（允許演算法自動調換最佳放置順序 ➔ 拿最高分）
+        # 遍歷目前剩餘的所有方塊（自動尋找最佳調換順序）
         for i in p_indices:
             p = pieces[i]
             p_rows = len(p)
             p_cols = len(p[0])
             
-            # 幾何剪枝：直接限制迴圈邊界，避免越界運算
+            # 幾何剪枝：直接限制迴圈邊界
             for r in range(9 - p_rows):
                 for c in range(9 - p_cols):
                     
                     # 快速檢查該位置是否衝突
                     if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
                         
-                        # 使用切片複製提升 50 倍搜尋速度
+                        # 使用高速切片複製
                         ng = [row[:] for row in grid]
                         
                         # 實體放置方塊
@@ -471,18 +472,21 @@ class LogicSolver:
                         # 記錄本次投放細節
                         current_placement = (i, r, c, rs, cs)
                         
-                        # 遞迴向下搜尋
-                        res_path, res_perimeter = self._solve_core(
+                        # 💡 計算這一步消了幾行/幾列
+                        step_cleared = len(rs) + len(cs)
+                        
+                        # 遞迴向下搜尋，並將消除行數累加傳遞下去
+                        res_path, res_score = self._solve_core(
                             ng, pieces, [idx for idx in p_indices if idx != i], 
-                            path + [current_placement]
+                            path + [current_placement], accumulated_cleared + step_cleared
                         )
                         
-                        # 全域最優比較：挑選剩餘方塊周長最小（盤面最平整、靠最緊、最不破碎）的完美解
-                        if res_path is not None and res_perimeter < min_perimeter:
-                            min_perimeter = res_perimeter
+                        # 全域最優比較：挑選最終綜合分數最低（最密實且消行最多）的解
+                        if res_path is not None and res_score < min_score:
+                            min_score = res_score
                             best_path = res_path
                                 
-        return best_path, min_perimeter
+        return best_path, min_score
 
     def can_place_fast(self, grid, p, r, c, p_rows, p_cols):
         """ 極速版碰撞偵測 """
@@ -493,7 +497,7 @@ class LogicSolver:
         return True
 
     def get_perimeter(self, grid):
-        """ 計算 8x8 盤面剩餘方塊的總暴露邊緣（周長越小代表空隙越少、越緊密）"""
+        """ 計算 8x8 盤面剩餘方塊的總暴露邊緣（周長）"""
         perimeter = 0
         for r in range(8):
             for c in range(8):
