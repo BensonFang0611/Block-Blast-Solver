@@ -8,7 +8,7 @@ import base64
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from streamlit_gsheets import GSheetsConnection
-from vision_engine import VisionEngine
+from vision_engine import VisionEngine, LogicSolver
 
 # --- 🚀 核心配置 ---
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
@@ -80,96 +80,6 @@ def log_to_sheets(msg, img_url="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 🚀 輔助功能 5：最佳化解算引擎 (找出邊長/格數最小的完美解) ---
-class FastLogicSolver:
-    def __init__(self):
-        self.best_path = None
-        self.best_score = float('inf')
-
-    def calculate_score(self, grid):
-        """計算盤面的分數：邊長 / 格數 (越小代表盤面越集中，最佳為0)"""
-        squares = 0
-        perimeter = 0
-        for r in range(8):
-            for c in range(8):
-                if grid[r][c] == 1:
-                    squares += 1
-                    # 檢查四周是否為空或是邊界，來累加邊長
-                    if r == 0 or grid[r-1][c] == 0: perimeter += 1
-                    if r == 7 or grid[r+1][c] == 0: perimeter += 1
-                    if c == 0 or grid[r][c-1] == 0: perimeter += 1
-                    if c == 7 or grid[r][c+1] == 0: perimeter += 1
-        
-        # 如果盤面完全淨空，給予最完美的 0 分
-        if squares == 0:
-            return 0
-            
-        return perimeter / squares
-
-    def solve(self, grid, pieces, p_indices, path=None):
-        if path is None: 
-            path = []
-            self.best_path = None
-            self.best_score = float('inf')
-            
-        if not p_indices:
-            # 走到盡頭時，結算這個解法的分數
-            score = self.calculate_score(grid)
-            # 如果發現更好的解（分數更低），就記錄下來
-            if score < self.best_score:
-                self.best_score = score
-                self.best_path = list(path)
-            return self.best_path
-
-        for i in p_indices:
-            p = pieces[i]
-            p_rows, p_cols = len(p), len(p[0])
-            for r in range(9 - p_rows):
-                for c in range(9 - p_cols):
-                    if self.can_place(grid, p, r, c, p_rows, p_cols):
-                        next_g = self.simulate(grid, p, r, c, p_rows, p_cols)
-                        po_g = self.place_only(grid, p, r, c, p_rows, p_cols)
-                        cl_rs, cl_cs = self.get_cleared(po_g)
-                        
-                        self.solve(
-                            next_g, 
-                            pieces, 
-                            [idx for idx in p_indices if idx != i], 
-                            path + [(i, r, c, cl_rs, cl_cs)]
-                        )
-                        
-        return self.best_path
-
-    def can_place(self, grid, p, r, c, p_rows, p_cols):
-        for pr in range(p_rows):
-            for pc in range(p_cols):
-                if p[pr][pc] and grid[r+pr][c+pc]:
-                    return False
-        return True
-
-    def place_only(self, grid, p, r, c, p_rows, p_cols):
-        ng = [row[:] for row in grid]
-        for pr in range(p_rows):
-            for pc in range(p_cols):
-                if p[pr][pc]:
-                    ng[r+pr][c+pc] = 1
-        return ng
-
-    def get_cleared(self, grid):
-        rs = [i for i, row in enumerate(grid) if all(row)]
-        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
-        return rs, cs
-
-    def simulate(self, grid, p, r, c, p_rows, p_cols):
-        ng = self.place_only(grid, p, r, c, p_rows, p_cols)
-        rs, cs = self.get_cleared(ng)
-        for i in rs:
-            ng[i] = [0]*8
-        for j in cs:
-            for i in range(8):
-                ng[i][j] = 0
-        return ng
-
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
@@ -206,7 +116,7 @@ def show_thanks_dialog(msg):
 
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver")
+st.title("🧩 Block Blast Solver ")
 
 file = st.file_uploader("📸 上傳截圖(最近更新26/5/25)", type=['png','jpg','jpeg','heic'], key="uploader")
 
@@ -238,16 +148,10 @@ if file:
     eng = VisionEngine(cv_img)
     if eng.process():
         st.header("💡 解法建議")
-        solver = FastLogicSolver()
+        solver = LogicSolver()
+        sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
-        try:
-            with st.spinner("🚀 正在尋找最佳解法..."):
-                sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-        except Exception as e:
-            st.error(f"⚠️ 計算過程發生例外狀況 ({e})，已強制中斷。")
-            sol = None
-        
-        if sol is not None and len(sol) > 0:
+        if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
             
@@ -269,7 +173,7 @@ if file:
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
                             
-                # 2. 當下結算消除印記
+                # 2. 當下結算消除印記 (這樣下一步的方塊就會正常蓋過它)
                 if cl_rs or cl_cs:
                     overlay = canvas.copy()
                     if cl_rs:
@@ -281,7 +185,6 @@ if file:
                     cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
                 
             st.image(canvas, channels="BGR", use_container_width=True)
-            st.success(f"🏆 已找到盤面最集中、消除效率最佳的排法！")
         else:
             st.warning("此盤面無解:..)")
             
@@ -321,6 +224,6 @@ with st.form("feedback_form"):
 
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-        Block Blast Solver Beta v2.3 | Powered by Color Sensing Engine
+        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
     </div>
 """, unsafe_allow_html=True)
