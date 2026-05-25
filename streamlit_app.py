@@ -118,7 +118,7 @@ def show_thanks_dialog(msg):
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
 st.title("🧩 Block Blast Solver ")
 
-file = st.file_uploader("📸 上傳截圖(最近更新26/5/25)", type=['png','jpg','jpeg','heic'], key="uploader")
+file = st.file_uploader("📸 上傳截圖(26/5/25.1)", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
     # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
