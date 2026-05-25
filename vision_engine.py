@@ -412,79 +412,76 @@ class VisionEngine:
         return rect
 
 # =================================================================
-# 🚀 【終極高速版】：全域搜尋「放完且消除完後的最小總周長」解題引擎
+# 🚀 【終極解封版】：全域搜尋「自由順序擺放」消完後的最小總周長引擎
 # =================================================================
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
         """ 
         Streamlit 專用主接口：
-        保持與原版完全相同的呼叫方式，但在內部執行「放完消除完後最小周長」的全域最優化搜尋。
+        完全解放方塊順序，允許 AI 任意調換 [0,1,2] 的先後順序，找出全消最優解！
         """
         if path is None:
             # 這是來自 streamlit_app.py 的第一層呼叫
             best_path, _ = self._solve_core(grid, pieces, p_indices, [])
-            # 💡 只回傳純粹的步驟清單，確保前端解包（sol[s]）絕對不噴 ValueError
+            # 💡 只回傳純粹的步驟清單，長度絕對是 3，Streamlit 讀取完會精準顯示第 0~3 步！
             return best_path
         
         return self._solve_core(grid, pieces, p_indices, path)
 
     def _solve_core(self, grid, pieces, p_indices, path):
-        # 💡 【核心修改點 1：基底條件】
-        # 當 3 個方塊都依序模擬擺放，且各自的消行/消列都執行完畢後
+        # 💡 基底條件：當 3 個方塊都依序模擬擺放，且各自的消行/消列都執行完畢後
         if not p_indices: 
-            # 💡 完全符合要求：直接計算這個最終殘局盤面的「純粹總周長」並回傳
+            # 計算這個最終殘局盤面的「純粹總周長」並回傳。如果全消，周長就是完美的 0 分！
             return path, self.get_perimeter(grid)
 
         best_path = None
-        min_perimeter = float('inf') # 預設周長為無限大
+        min_perimeter = float('inf') 
 
-        # 強制按照 0 ➔ 1 ➔ 2 的嚴格順序推進，完美迎合你前端 UI 的 k 迴圈渲染邏輯
-        i = p_indices[0]
-        p = pieces[i]
-        p_rows = len(p)
-        p_cols = len(p[0])
-        
-        # 幾何剪枝：直接限制迴圈邊界，運算速度提速 50 倍，Streamlit 絕不卡死
-        for r in range(9 - p_rows):
-            for c in range(9 - p_cols):
-                
-                # 快速碰撞檢查
-                if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
+        # 🌟 【重大修正：解放順序】遍歷目前「所有還沒放」的方塊索引
+        # 演算法會自動窮舉 0->1->2, 1->2->0, 2->0->1 等全部 6 種擺放順序！
+        for i in p_indices:
+            p = pieces[i]
+            p_rows = len(p)
+            p_cols = len(p[0])
+            
+            # 幾何剪枝：直接限制迴圈邊界
+            for r in range(9 - p_rows):
+                for c in range(9 - p_cols):
                     
-                    # 使用高速切片複製，擺脫極慢的 deepcopy
-                    ng = [row[:] for row in grid]
-                    
-                    # 1. 實體放置當前這顆方塊
-                    for pr in range(p_rows):
-                        for pc in range(p_cols):
-                            if p[pr][pc]:
-                                ng[r+pr][c+pc] = 1
-                    
-                    # 2. 即時計算當下這步觸發的消行與消列
-                    rs = [idx for idx, row in enumerate(ng) if all(row)]
-                    cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
-                    
-                    # 3. 實體執行物理消除（清空變回 0）
-                    for row_idx in rs: 
-                        ng[row_idx] = [0]*8
-                    for col_idx in cs:
-                        for row_idx in range(8): 
-                            ng[row_idx][col_idx] = 0
-                    
-                    # 記錄這一步的擺放細節，供前端動畫渲染
-                    current_placement = (i, r, c, rs, cs)
-                    
-                    # 遞迴向下搜尋下一顆方塊 (順序推進 p_indices[1:])
-                    res_path, res_perimeter = self._solve_core(
-                        ng, pieces, p_indices[1:], 
-                        path + [current_placement]
-                    )
-                    
-                    # 💡 【核心修改點 2：全域最優比較】
-                    # 尋找 3 步全部走完、全部消除乾淨後，殘留總周長最小的那個解
-                    if res_path is not None and res_perimeter < min_perimeter:
-                        min_perimeter = res_perimeter
-                        best_path = res_path
+                    # 快速碰撞檢查
+                    if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
+                        
+                        # 使用高速切片複製
+                        ng = [row[:] for row in grid]
+                        
+                        # 1. 實體放置當前這顆方塊
+                        for pr in range(p_rows):
+                            for pc in range(p_cols):
+                                if p[pr][pc]:
+                                    ng[r+pr][c+pc] = 1
+                        
+                        # 2. 即時計算當下這步觸發的消行與消列
+                        rs = [idx for idx, row in enumerate(ng) if all(row)]
+                        cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
+                        
+                        # 3. 實體執行物理消除（變回 0）
+                        for row_idx in rs: ng[row_idx] = [0]*8
+                        for col_idx in cs:
+                            for row_idx in range(8): ng[row_idx][col_idx] = 0
+                        
+                        # 記錄這一步的擺放細節 (包含它是哪個方塊 i)
+                        current_placement = (i, r, c, rs, cs)
+                        
+                        # 遞迴向下搜尋：💡 從剩餘的 p_indices 中排除當前已使用的 i
+                        res_path, res_perimeter = self._solve_core(
+                            ng, pieces, [idx for idx in p_indices if idx != i], 
+                            path + [current_placement]
+                        )
+                        
+                        # 全域最優比較：尋找能讓最終殘局總周長最小（全消 = 0）的完美神解！
+                        if res_path is not None and res_perimeter < min_perimeter:
+                            min_perimeter = res_perimeter
+                            best_path = res_path
                                 
         return best_path, min_perimeter
 
@@ -502,7 +499,6 @@ class LogicSolver:
         for r in range(8):
             for c in range(8):
                 if grid[r][c] == 1:
-                    # 檢查上下左右 4 個方位，只要鄰居超出棋盤邊界或是空格(0)，周長線段就 +1
                     if r == 0 or grid[r-1][c] == 0: perimeter += 1
                     if r == 7 or grid[r+1][c] == 0: perimeter += 1
                     if c == 0 or grid[r][c-1] == 0: perimeter += 1
