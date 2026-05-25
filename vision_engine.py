@@ -89,9 +89,9 @@ class VisionEngine:
         rough_box = max(candidates, key=lambda c: c['area'])
         bx, by, bw, bh = rough_box['bx'], rough_box['by'], rough_box['bw'], rough_box['bh']
 
-        # 建立 90% 純淨區 (上下左右各往內縮 5%，避開邊緣特效)
-        sx, sy = int(bx + bw * 0.05), int(by + bh * 0.05)
-        sw, sh = int(bw * 0.90), int(bh * 0.90)
+        # 建立 80% 純淨區 (上下左右各往內縮 10%，避開邊緣特效)
+        sx, sy = int(bx + bw * 0.10), int(by + bh * 0.10)
+        sw, sh = int(bw * 0.80), int(bh * 0.80)
 
         # 💡 [ Debug 視覺化 ]：在全域 Debug 圖上框出粗略大框與 ROI 隔離區
         cv2.rectangle(self.img_debug, (bx, by), (bx + bw, by + bh), (255, 0, 0), 2)
