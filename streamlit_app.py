@@ -169,9 +169,17 @@ if file:
         # 利用 INTER_AREA 抗鋸齒縮小大圖
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 用固定畫質的 cv_img 丟進辨識大腦
+    # 初始化辨識引擎
     eng = VisionEngine(cv_img)
 
+    # ─── 🛡️ 加入 try-except 安全保底隔離，防止引擎崩潰 ───
+    is_processed = False
+    try:
+        is_processed = eng.process()
+    except Exception as e:
+        print(f"引擎內部發生錯誤: {e}")
+        is_processed = False # 發生 IndexError 時強制判定為失敗，走回報流程
+        
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
