@@ -86,20 +86,20 @@ def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("局，回報錯誤", type="primary", use_container_width=True):
+        if st.button("回報錯誤", type="primary", use_container_width=True):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
                 report_path = "temp/feedback_auto.jpg"
                 cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
                 url = upload_to_imgbb(report_path)
-                log_to_sheets("系統自動回報：無法定位棋盤", url)
+                log_to_sheets("無法定位棋盤", url)
                 st.session_state.dialog_closed = True
                 st.session_state.show_dialog = False
                 st.session_state.show_thanks_dialog = True
                 st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
                 st.rerun()
     with col2:
-        if st.button("否，取消", use_container_width=True):
+        if st.button("取消", use_container_width=True):
             st.session_state.dialog_closed = True
             st.session_state.show_dialog = False
             st.session_state.show_thanks_dialog = True
@@ -118,7 +118,7 @@ def show_thanks_dialog(msg):
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
 st.title("🧩 Block Blast Solver ")
 
-file = st.file_uploader("📸 上傳截圖(26/5/25.1)", type=['png','jpg','jpeg','heic'], key="uploader")
+file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
     # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
