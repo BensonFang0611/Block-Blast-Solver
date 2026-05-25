@@ -66,16 +66,18 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets（4 欄結構：Timestamp, Comment, Image_Link_Orig, Image_Link_Debug） ---
-def log_to_sheets(msg, img_url_orig="None", img_url_debug="None"):
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets（更新為 5 欄結構） ---
+def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_debug="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         
+        # 嚴格對齊 5 欄位結構
         new_entry = pd.DataFrame([{
             "Timestamp": now_tw, 
-            "Comment": msg, 
+            "Error_Type": err_type,
+            "Detailed_Info": detail_info,
             "Image_Link_Orig": img_url_orig,
             "Image_Link_Debug": img_url_debug
         }])
@@ -88,7 +90,7 @@ def log_to_sheets(msg, img_url_orig="None", img_url_debug="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 💡 第一個彈跳視窗：辨識失敗 ---
+# --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
     st.write(f"系統偵測到錯誤（{error_detail}），請問您是否回報此錯誤圖片？")
@@ -102,8 +104,13 @@ def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
                 cv2.imwrite(orig_path, cv_img)
                 url_orig = upload_to_imgbb(orig_path)
                 
-                # 自動彈出的辨識失敗通常沒有成功的 Debug 圖，故 Debug 欄位帶入 "None"
-                log_to_sheets(f"自動回報: {error_detail}", img_url_orig=url_orig, img_url_debug="None")
+                # 自動回報：錯誤類別帶入 "自動定位失敗"，詳細資訊帶入具體報錯訊息
+                log_to_sheets(
+                    err_type="自動定位失敗", 
+                    detail_info=error_detail, 
+                    img_url_orig=url_orig, 
+                    img_url_debug="None"
+                )
                 
                 st.session_state.dialog_closed = True
                 st.session_state.show_dialog = False
@@ -144,8 +151,9 @@ if file:
             st.session_state.pop(key, None)
         st.session_state.last_file_id = current_file_id
         
+    # ✨ User Visit 簽到
     if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
-        if log_to_sheets("User Visit"):
+        if log_to_sheets(err_type="User Visit", detail_info="None"):
             st.session_state.logged_file = current_file_id
 
     # 讀取原始影像
@@ -164,13 +172,12 @@ if file:
     # 初始化辨識引擎
     eng = VisionEngine(cv_img)
 
-    # ─── 🛡️ 安全保底隔離霜：執行辨識並完整封鎖 IndexError 崩潰 ───
+    # ─── 🛡️ 安全保底隔離霜 ───
     is_processed = False
     try:
         is_processed = eng.process()
     except Exception as e:
-        # 將報錯訊息暫存到 session_state，供對話框顯示
-        st.session_state.current_error_msg = f"引擎內部發生錯誤: {type(e).__name__}"
+        st.session_state.current_error_msg = f"IndexError 或核心引擎崩潰: {type(e).__name__}"
         is_processed = False 
 
     if is_processed:
@@ -232,12 +239,11 @@ if file:
     elif st.session_state.get("show_thanks_dialog", False):
         show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
-    # --- 2. Feedback 回饋系統（手動回報區改為 選項 + 其他） ---
+    # --- 2. Feedback 回饋系統（手動回報區：類別與詳細資訊徹底拆分） ---
     st.markdown("---")
     st.subheader("🚩 Feedback 錯誤回報")
     
     with st.form("feedback_form"):
-        # 建立結構化的選單選項
         error_type = st.selectbox(
             "請選擇發生的錯誤類型：",
             [
@@ -249,36 +255,31 @@ if file:
             ]
         )
         
-        # 提供給選擇「其他」或需要補充細節的文字輸入框
         other_detail = st.text_input("其他原因或詳細補充說明：(選填)")
         
         if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
-                # 統整最後要送入 Sheet 的字串
-                if "其他" in error_type:
-                    final_comment = f"手動回報(其他): {other_detail}" if other_detail else "手動回報(其他原因未寫)"
-                else:
-                    final_comment = f"手動回報: {error_type}"
-                    if other_detail:
-                        final_comment += f" | 補充: {other_detail}"
+                # 處理手動回報的寫入數據
+                final_type = f"手動回報: {error_type}"
+                final_detail = other_detail if other_detail else "手動回報(其他原因未寫)" if "其他" in error_type else "未填寫補充說明"
                 
                 os.makedirs("temp", exist_ok=True)
                 orig_path = "temp/feedback_orig.jpg"
                 debug_path = "temp/feedback_debug.jpg"
                 
-                # 儲存降過畫質的原圖與帶標記的 Debug 圖
+                # 儲存固定畫質的原圖
                 cv2.imwrite(orig_path, cv_img)
                 
                 # 檢查是否有產出 debug 圖片，如果沒有就傳原圖
                 has_debug = 'eng' in locals() and hasattr(eng, 'img_debug') and eng.img_debug is not None
                 cv2.imwrite(debug_path, eng.img_debug if has_debug else cv_img)
                 
-                # 上傳雙圖
+                # 上傳雙圖至 ImgBB
                 url_orig = upload_to_imgbb(orig_path)
                 url_debug = upload_to_imgbb(debug_path) if has_debug else "None"
                 
-                # 寫入 4 欄
-                if log_to_sheets(final_comment, url_orig, url_debug):
+                # 寫入 5 欄 (將類別與詳細資訊分開傳入)
+                if log_to_sheets(err_type=final_type, detail_info=final_detail, img_url_orig=url_orig, img_url_debug=url_debug):
                     st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
 st.markdown("""
