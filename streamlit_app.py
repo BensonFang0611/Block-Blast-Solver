@@ -172,15 +172,17 @@ if file:
     # 初始化辨識引擎
     eng = VisionEngine(cv_img)
 
-    # ─── 🛡️ 加入 try-except 安全保底隔離，防止引擎崩潰 ───
+    # ─── 🛡️ 安全保底隔離霜：執行辨識並完整封鎖崩潰 ───
     is_processed = False
     try:
         is_processed = eng.process()
     except Exception as e:
         print(f"引擎內部發生錯誤: {e}")
-        is_processed = False # 發生 IndexError 時強制判定為失敗，走回報流程
-        
-    if eng.process():
+        is_processed = False  # 發生 IndexError 錯誤時，強制設定為失敗，直接觸發回報彈窗
+    # ────────────────────────────────────────────────
+
+    # 💡 這裡改成檢查剛剛 try 裡面的結果，不要再重複呼叫一次 eng.process() 囉！
+    if is_processed:
         st.header("💡 解法建議")
         solver = LogicSolver()
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
