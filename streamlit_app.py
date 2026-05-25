@@ -8,7 +8,7 @@ import base64
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from streamlit_gsheets import GSheetsConnection
-from vision_engine import VisionEngine
+from vision_engine import VisionEngine, LogicSolver
 
 # --- 🚀 核心配置 ---
 IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
@@ -80,55 +80,6 @@ def log_to_sheets(msg, img_url="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 🚀 輔助功能 5：高速邏輯運算核心 (防超時崩潰) ---
-class FastLogicSolver:
-    def solve(self, grid, pieces, p_indices, path=None):
-        if path is None: path = []
-        if not p_indices: return path
-        for i in p_indices:
-            p = pieces[i]
-            p_rows, p_cols = len(p), len(p[0])
-            # 邊界剪枝：直接排除會超出邊界的座標，大幅減少計算量
-            for r in range(9 - p_rows):
-                for c in range(9 - p_cols):
-                    if self.can_place(grid, p, r, c, p_rows, p_cols):
-                        next_g = self.simulate(grid, p, r, c, p_rows, p_cols)
-                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], 
-                                         path + [(i, r, c, *self.get_cleared(self.place_only(grid, p, r, c, p_rows, p_cols)))])
-                        if res: return res
-        return None
-
-    def can_place(self, grid, p, r, c, p_rows, p_cols):
-        for pr in range(p_rows):
-            for pc in range(p_cols):
-                if p[pr][pc] and grid[r+pr][c+pc]:
-                    return False
-        return True
-
-    def place_only(self, grid, p, r, c, p_rows, p_cols):
-        # 記憶體優化：用推導式取代極慢的 copy.deepcopy
-        ng = [row[:] for row in grid]
-        for pr in range(p_rows):
-            for pc in range(p_cols):
-                if p[pr][pc]:
-                    ng[r+pr][c+pc] = 1
-        return ng
-
-    def get_cleared(self, grid):
-        rs = [i for i, row in enumerate(grid) if all(row)]
-        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
-        return rs, cs
-
-    def simulate(self, grid, p, r, c, p_rows, p_cols):
-        ng = self.place_only(grid, p, r, c, p_rows, p_cols)
-        rs, cs = self.get_cleared(ng)
-        for i in rs:
-            ng[i] = [0]*8
-        for j in cs:
-            for i in range(8):
-                ng[i][j] = 0
-        return ng
-
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(eng, cv_img):
@@ -197,17 +148,10 @@ if file:
     eng = VisionEngine(cv_img)
     if eng.process():
         st.header("💡 解法建議")
-        solver = FastLogicSolver() # 替換成高速解算器
+        solver = LogicSolver()
+        sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
-        # 加上 Try-Except 雙重防護，確保任何未知報錯都會乖乖變成「無解」
-        try:
-            with st.spinner("🚀 正在尋找最佳解法..."):
-                sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-        except Exception as e:
-            st.error(f"⚠️ 計算過程發生例外狀況 ({e})，已強制中斷。")
-            sol = None
-        
-        if sol is not None and len(sol) > 0:
+        if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
             
@@ -280,6 +224,6 @@ with st.form("feedback_form"):
 
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-        Block Blast Solver Beta v2.2 | Powered by Color Sensing Engine
+        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
     </div>
 """, unsafe_allow_html=True)
