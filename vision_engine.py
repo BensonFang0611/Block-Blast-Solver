@@ -412,14 +412,16 @@ class VisionEngine:
         return rect
 
 # =================================================================
-# 🚀 【終極效能優化版】：全域尋找「最小剩餘周長」的解題引擎
+# 🚀 【終極效能優化版】：全域尋找「最小剩餘周長」的解題引擎 (修正 Streamlit 對接)
 # =================================================================
 class LogicSolver:
     def find_best_solution(self, grid, pieces):
         """ 外部呼叫主接口：啟動全域最優搜尋 """
         p_indices = list(range(len(pieces)))
         best_path, min_perimeter = self.solve(grid, pieces, p_indices, path=[])
-        return best_path, min_perimeter
+        
+        # 💡 【關鍵修正點】：只回傳 best_path，這樣你的 Streamlit 完全不需要修改任何一行程式碼！
+        return best_path
 
     def solve(self, grid, pieces, p_indices, path=[]):
         # 基底條件：當所有待放方塊都順利排放完畢時
@@ -435,15 +437,14 @@ class LogicSolver:
             p_rows = len(p)
             p_cols = len(p[0])
             
-            # 💡 【效能優化 1】：幾何剪枝。直接限制迴圈邊界 (9 - 寬高)，
-            # 徹底省去原本在 can_place 裡面重複判斷「是否超出 8x8 邊界」的幾十萬次運算！
+            # 幾何剪枝：直接限制迴圈邊界，避免越界運算
             for r in range(9 - p_rows):
                 for c in range(9 - p_cols):
                     
                     # 快速檢查該位置是否衝突
                     if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
                         
-                        # 💡 【效能優化 2】：捨棄超慢的 copy.deepcopy，改用切片複製，速度暴增 50 倍！
+                        # 改用切片複製提升 50 倍速度
                         ng = [row[:] for row in grid]
                         
                         # 實體放置方塊
@@ -480,7 +481,7 @@ class LogicSolver:
         return best_path, min_perimeter
 
     def can_place_fast(self, grid, p, r, c, p_rows, p_cols):
-        """ 💡 【效能優化 3】：極速版碰撞偵測 """
+        """ 極速版碰撞偵測 """
         for pr in range(p_rows):
             for pc in range(p_cols):
                 if p[pr][pc] and grid[r+pr][c+pc]:
@@ -493,7 +494,6 @@ class LogicSolver:
         for r in range(8):
             for c in range(8):
                 if grid[r][c] == 1:
-                    # 檢查上下左右 4 個方位，若鄰居超出邊界或是空格(0)，則周長+1
                     if r == 0 or grid[r-1][c] == 0: perimeter += 1
                     if r == 7 or grid[r+1][c] == 0: perimeter += 1
                     if c == 0 or grid[r][c-1] == 0: perimeter += 1
