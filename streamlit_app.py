@@ -260,8 +260,7 @@ if file:
         if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
                 # 處理手動回報的寫入數據
-                final_type = f"手動回報: {error_type}"
-                final_detail = other_detail if other_detail else "手動回報(其他原因未寫)" if "其他" in error_type else "未填寫補充說明"
+                final_detail = other_detail if "其他" in error_type else "未填寫補充說明"
                 
                 os.makedirs("temp", exist_ok=True)
                 orig_path = "temp/feedback_orig.jpg"
