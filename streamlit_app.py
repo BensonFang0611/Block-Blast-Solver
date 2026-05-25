@@ -66,13 +66,14 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets (支援原圖與Debug圖雙網址) ---
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets（嚴格符合指定的 4 欄結構） ---
 def log_to_sheets(msg, img_url_orig="None", img_url_debug="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         
+        # 嚴格對齊你指定的 4 個欄位名稱
         new_entry = pd.DataFrame([{
             "Timestamp": now_tw, 
             "Comment": msg, 
@@ -88,9 +89,9 @@ def log_to_sheets(msg, img_url_orig="None", img_url_debug="None"):
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 💡 第一個彈跳視窗：辨識失敗 ---
+# --- 💡 第一個彈跳視窗：辨識失敗（此時無棋盤，僅回報原圖到 Image_Link_Orig） ---
 @st.dialog("❌ 辨識失敗")
-def show_failure_dialog(eng, cv_img):
+def show_failure_dialog(cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
@@ -98,20 +99,15 @@ def show_failure_dialog(eng, cv_img):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
                 
-                # 定義兩張照片的路徑
-                orig_path = "temp/feedback_auto_orig.jpg"
-                debug_path = "temp/feedback_auto_debug.jpg"
-                
-                # 分別寫入固定畫質的原圖與 Debug 圖
+                # 僅儲存固定畫質的原圖
+                orig_path = "temp/failure_auto_orig.jpg"
                 cv2.imwrite(orig_path, cv_img)
-                cv2.imwrite(debug_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
                 
-                # 依序上傳
+                # 上傳原圖
                 url_orig = upload_to_imgbb(orig_path)
-                url_debug = upload_to_imgbb(debug_path)
                 
-                # 紀錄到 Sheets
-                log_to_sheets("無法定位棋盤", url_orig, url_debug)
+                # 紀錄到 Sheets：Debug 欄位帶入 "None"
+                log_to_sheets("無法定位棋盤", img_url_orig=url_orig, img_url_debug="None")
                 
                 st.session_state.dialog_closed = True
                 st.session_state.show_dialog = False
@@ -141,40 +137,39 @@ st.title("🧩 Block Blast Solver ")
 file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
-    # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
+    # 💡 防呆機制 1：使用者清空圖片時重置所有狀態
     for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file"]:
         st.session_state.pop(key, None)
 
 if file:
-    # 取得這次上傳的「唯一識別碼」
     current_file_id = getattr(file, "file_id", str(file.size) + file.name)
     
-    # 💡 防呆機制 2：只要是新的上傳動作，就完全解開封印重置對話框
+    # 💡 防呆機制 2：新圖片上傳時解開對話框限制
     if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
         for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
             st.session_state.pop(key, None)
         st.session_state.last_file_id = current_file_id
         
-    # ✨ User Visit 簽到機制
+    # ✨ User Visit 簽到（無圖連結，後面預設代入 None）
     if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
         if log_to_sheets("User Visit"):
             st.session_state.logged_file = current_file_id
 
-    # 讀取影像
+    # 讀取原始影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
 
-    # --- 🎯 影像預處理：在判定前先降低至固定畫質（不壓縮畫質） ---
+    # --- 🎯 影像預處理：在任何判定前，先調降至固定畫質（不使用破壞性品質壓縮） ---
     h, w = cv_img.shape[:2]
     MAX_WIDTH = 1080 
     if w > MAX_WIDTH:
         scale = MAX_WIDTH / w
         new_w = int(w * scale)
         new_h = int(h * scale)
-        # 使用 INTER_AREA 自帶抗鋸齒，最適合縮小大圖至固定解析度
+        # 利用 INTER_AREA 抗鋸齒縮小大圖
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 初始化辨識引擎（此時傳進去的是固定畫質的影像）
+    # 用固定畫質的 cv_img 丟進辨識大腦
     eng = VisionEngine(cv_img)
 
     if eng.process():
@@ -190,12 +185,10 @@ if file:
             canvas = eng.warp_orig.copy()
             u = 400 / 8
             
-            # 依照時間軸依序繪製每一步的方塊與消除印記
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
-                # 1. 繪製當下這步的方塊本體與格線
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
@@ -204,7 +197,6 @@ if file:
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
                             
-                # 2. 當下結算消除印記 (這樣下一步的方塊就會正常蓋過它)
                 if cl_rs or cl_cs:
                     overlay = canvas.copy()
                     if cl_rs:
@@ -219,14 +211,13 @@ if file:
         else:
             st.warning("此盤面無解:..)")
             
-        # 待放方塊預覽
         st.markdown("---")
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_piece_img is not None:
             st.image(combined_piece_img, caption="偵測到的待放方塊", channels="BGR", use_container_width=True)
             
     else:
-        # ❌ 辨識失敗
+        # ❌ 辨識失敗：彈出對話視窗
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
@@ -235,11 +226,11 @@ if file:
     # 💡 彈跳視窗互斥控制中心
     # ==========================================
     if st.session_state.get("show_dialog", False):
-        show_failure_dialog(eng, cv_img)
+        show_failure_dialog(cv_img)
     elif st.session_state.get("show_thanks_dialog", False):
         show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
-    # --- 2. Feedback 回饋系統 ---
+    # --- 2. Feedback 回饋系統（手動回報，正常傳送原圖 + Debug 圖） ---
     st.markdown("---")
     st.subheader("🚩 Feedback 錯誤回報")
     
@@ -249,19 +240,18 @@ if file:
             with st.spinner("同步中..."):
                 os.makedirs("temp", exist_ok=True)
                 
-                # 1. 定義手動回報的兩張照片路徑
                 orig_path = "temp/feedback_orig.jpg"
                 debug_path = "temp/feedback_debug.jpg"
                 
-                # 2. 儲存固定畫質後的原圖與帶有標記的 Debug 圖（不作額外品質壓縮）
+                # 儲存降過畫質的原圖與帶標記的 Debug 圖（不加壓縮參數）
                 cv2.imwrite(orig_path, cv_img)
-                cv2.imwrite(debug_path, eng.img_debug if 'eng' in locals() else cv_img)
+                cv2.imwrite(debug_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
                 
-                # 3. 分別上傳並取得各自網址
+                # 上傳雙圖
                 url_orig = upload_to_imgbb(orig_path)
                 url_debug = upload_to_imgbb(debug_path)
                 
-                # 4. 同時將兩張圖寫入 Google Sheets
+                # 寫入 4 欄
                 if log_to_sheets(msg, url_orig, url_debug):
                     st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
