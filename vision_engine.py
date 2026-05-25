@@ -218,8 +218,8 @@ class VisionEngine:
                 # 直覺計算：白色像素佔整格區域的比例
                 white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 0
                 
-                # 門檻值設定：白色大於 5% 判定為有棋子
-                is_p = white_ratio > 0.05
+                # 門檻值設定：白色大於 1% 判定為有棋子
+                is_p = white_ratio > 0.01
                 self.grid_state[r][c] = 1 if is_p else 0
                 
                 # 繪製 Debug 框線與實心填充
