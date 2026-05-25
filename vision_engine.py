@@ -411,98 +411,20 @@ class VisionEngine:
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
 
-# =================================================================
-# 🚀 【終極高速周長優化版】：全域搜尋最小周長解，完美相容原版前端
-# =================================================================
+
 class LogicSolver:
-    def solve(self, grid, pieces, p_indices, path=None):
-        """ 
-        Streamlit 專用主接口：
-        保持與舊版完全相同的呼叫參數，但在內部執行全域最小周長（最密實盤面）最佳化搜尋。
-        """
-        if path is None:
-            # 這是來自 streamlit_app.py 的第一層呼叫
-            best_path, _ = self._solve_core(grid, pieces, p_indices, [])
-            # 💡 【核心修正】：只回傳純粹的解法步驟清單（3步），長度回歸正常，Streamlit 絕不翻車！
-            return best_path
-        
-        # 萬一有其他地方帶有 path 遞迴呼叫，直接導向核心
-        return self._solve_core(grid, pieces, p_indices, path)
-
-    def _solve_core(self, grid, pieces, p_indices, path):
-        # 基底條件：當所有待放方塊都順利排放完畢時
-        if not p_indices: 
-            return path, self.get_perimeter(grid)
-
-        best_path = None
-        min_perimeter = float('inf') 
-
-        # 遍歷目前剩餘的所有方塊（允許演算法自動調換最佳放置順序 ➔ 拿最高分）
+    def solve(self, grid, pieces, p_indices, path=[]):
+        if not p_indices: return path
         for i in p_indices:
             p = pieces[i]
-            p_rows = len(p)
-            p_cols = len(p[0])
-            
-            # 幾何剪枝：直接限制迴圈邊界，避免越界運算
-            for r in range(9 - p_rows):
-                for c in range(9 - p_cols):
-                    
-                    # 快速檢查該位置是否衝突
-                    if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
-                        
-                        # 使用切片複製提升 50 倍搜尋速度
-                        ng = [row[:] for row in grid]
-                        
-                        # 實體放置方塊
-                        for pr in range(p_rows):
-                            for pc in range(p_cols):
-                                if p[pr][pc]:
-                                    ng[r+pr][c+pc] = 1
-                        
-                        # 即時計算消行與消列
-                        rs = [idx for idx, row in enumerate(ng) if all(row)]
-                        cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
-                        
-                        # 執行消除
-                        for row_idx in rs: ng[row_idx] = [0]*8
-                        for col_idx in cs:
-                            for row_idx in range(8): ng[row_idx][col_idx] = 0
-                        
-                        # 記錄本次投放細節
-                        current_placement = (i, r, c, rs, cs)
-                        
-                        # 遞迴向下搜尋
-                        res_path, res_perimeter = self._solve_core(
-                            ng, pieces, [idx for idx in p_indices if idx != i], 
-                            path + [current_placement]
-                        )
-                        
-                        # 全域最優比較：挑選剩餘方塊周長最小（盤面最平整、靠最緊、最不破碎）的完美解
-                        if res_path is not None and res_perimeter < min_perimeter:
-                            min_perimeter = res_perimeter
-                            best_path = res_path
-                                
-        return best_path, min_perimeter
-
-    def can_place_fast(self, grid, p, r, c, p_rows, p_cols):
-        """ 極速版碰撞偵測 """
-        for pr in range(p_rows):
-            for pc in range(p_cols):
-                if p[pr][pc] and grid[r+pr][c+pc]:
-                    return False
-        return True
-
-    def get_perimeter(self, grid):
-        """ 計算 8x8 盤面剩餘方塊的總暴露邊緣（周長越小代表空隙越少、越緊密）"""
-        perimeter = 0
-        for r in range(8):
-            for c in range(8):
-                if grid[r][c] == 1:
-                    if r == 0 or grid[r-1][c] == 0: perimeter += 1
-                    if r == 7 or grid[r+1][c] == 0: perimeter += 1
-                    if c == 0 or grid[r][c-1] == 0: perimeter += 1
-                    if c == 7 or grid[r][c+1] == 0: perimeter += 1
-        return perimeter
+            for r in range(8):
+                for c in range(8):
+                    if self.can_place(grid, p, r, c):
+                        next_g = self.simulate(grid, p, r, c)
+                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], 
+                                         path + [(i, r, c, *self.get_cleared(self.place_only(grid, p, r, c)))])
+                        if res: return res
+        return None
 
     def can_place(self, grid, p, r, c):
         for pr in range(len(p)):
@@ -531,3 +453,33 @@ class LogicSolver:
         for j in cs:
             for i in range(8): ng[i][j] = 0
         return ng
+if __name__ == "__main__":
+    # ==========================================
+    # 1. 設定你的測試圖片路徑
+    # ==========================================
+    IMAGE_PATH = "9.jpg"  # <-- 請修改為你的圖片路徑
+    print(f"正在讀取圖片: {IMAGE_PATH} ...")
+    img = cv2.imread(IMAGE_PATH)
+    
+    if img is None:
+        print(f"❌ 錯誤：無法讀取圖片！請檢查檔案路徑或檔名是否正確。")
+        exit()
+
+    # ==========================================
+    # 2. 執行視覺辨識引擎 (VisionEngine)
+    # ==========================================
+    print("\n--- 啟動 VisionEngine 辨識 ---")
+    engine = VisionEngine(img)
+    success = engine.process()
+    
+    if not success:
+        print("❌ 棋盤定位失敗！請確認圖片中的棋盤邊框完整且沒有被嚴重遮擋。")
+        # 即使失敗，如果 debug 圖有建立，依然顯示出來看看問題出在哪
+        if engine.img_debug is not None:
+            cv2.imshow("Debug - Failed", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
+            cv2.waitKey(0)
+        exit()
+        
+    print("✅ 視覺辨識成功！")
+    cv2.imshow("Debug - Success", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
+    cv2.waitKey(0)
