@@ -60,6 +60,9 @@ class VisionEngine:
         self.grid_state = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         
         self.img_debug = self.img_orig.copy()
+
+        cv2.imshow("grid_state", cv2.resize(self.grid_state, (0, 0), fx=0.4, fy=0.4))
+
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
@@ -94,8 +97,12 @@ class VisionEngine:
         kernel_h, kernel_v = np.ones((1, 101), np.uint8), np.ones((101, 1), np.uint8)
         thresh_h = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
+        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
         thresh_v = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
+        # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
+        # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
         proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
         proj_x = np.sum(thresh_v[sy:sy+sh, sx:sx+sw], axis=0) / 255
@@ -179,7 +186,7 @@ class VisionEngine:
             return exact_min, exact_max
 
         # ==========================================
-        # 呼叫與保險機制
+        # 呼叫與保險機制 (移除 cv2.imshow 彈出視窗)
         # ==========================================
         # 分別解析 Y 軸與 X 軸 (參數減少，不再傳入 img_roi)
         min_y, max_y = get_exact_edges_from_roi_debug(proj_y, sy, by, is_horizontal=True)
@@ -363,10 +370,12 @@ class VisionEngine:
             if has_pieces:
                 if grid in self.legal_grids:
                     final_grid = grid
+                    print(f"方塊({ox},{oy}) 成功使用背景相對比較法 [{channel}] 通道通關！")
                     break
         
         if final_grid is None:
             final_grid = grid
+            print(f"⚠️ 方塊({ox},{oy}) 背景相對比較未完全命中合法角度，啟動安全保底。")
 
         # ==========================================
         # 視覺化邊框繪製（完美對齊校正後的精準左上角）
@@ -446,4 +455,4 @@ class LogicSolver:
         for i in rs: ng[i] = [0]*8
         for j in cs:
             for i in range(8): ng[i][j] = 0
-        return ng 
+        return ng
