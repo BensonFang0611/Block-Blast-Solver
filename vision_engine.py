@@ -411,20 +411,66 @@ class VisionEngine:
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
 
-
+# =================================================================
+# 💡 【核心修改】：升級為全域尋找「最小剩餘周長」的解題引擎
+# =================================================================
 class LogicSolver:
+    def find_best_solution(self, grid, pieces):
+        """ 外部呼叫主接口：啟動全域最優搜尋 """
+        p_indices = list(range(len(pieces)))
+        best_path, min_perimeter = self.solve(grid, pieces, p_indices, path=[])
+        return best_path, min_perimeter
+
     def solve(self, grid, pieces, p_indices, path=[]):
-        if not p_indices: return path
+        # 💡 基底條件：當所有待放方塊都順利排放完畢時
+        if not p_indices: 
+            # 計算目前這個盤面（放完全部方塊並消除行列後）的方塊暴露總周長
+            current_perimeter = self.get_perimeter(grid)
+            return path, current_perimeter
+
+        best_path = None
+        min_perimeter = float('inf') # 預設周長為無限大
+
+        # 遍歷目前剩餘的所有方塊
         for i in p_indices:
             p = pieces[i]
+            # 遍歷 8x8 棋盤的每一個可能座標
             for r in range(8):
                 for c in range(8):
                     if self.can_place(grid, p, r, c):
+                        # 模擬放置並執行消行/消列後的「新盤面狀態」
                         next_g = self.simulate(grid, p, r, c)
-                        res = self.solve(next_g, pieces, [idx for idx in p_indices if idx != i], 
-                                         path + [(i, r, c, *self.get_cleared(self.place_only(grid, p, r, c)))])
-                        if res: return res
-        return None
+                        
+                        # 記錄本次投放細節
+                        cleared_info = self.get_cleared(self.place_only(grid, p, r, c))
+                        current_placement = (i, r, c, *cleared_info)
+                        
+                        # 遞迴向下搜尋下一個方塊的所有可能放法
+                        res_path, res_perimeter = self.solve(
+                            next_g, pieces, [idx for idx in p_indices if idx != i], 
+                            path + [current_placement]
+                        )
+                        
+                        # 💡 全域比較：如果找到了完整放完的解，且它的盤面周長比以往都還要小
+                        if res_path is not None and res_perimeter < min_perimeter:
+                            min_perimeter = res_perimeter
+                            best_path = res_path
+                            
+        return best_path, min_perimeter
+
+    def get_perimeter(self, grid):
+        """ 💡 新增：計算 8x8 盤面剩餘方塊的總暴露邊緣（周長）"""
+        perimeter = 0
+        for r in range(8):
+            for c in range(8):
+                if grid[r][c] == 1:
+                    # 檢查上下左右 4 個方位
+                    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        nr, nc = r + dr, c + dc
+                        # 如果鄰居超出邊界，或是空格子(0)，代表這是一條暴露在外面的周長邊緣
+                        if nr < 0 or nr >= 8 or nc < 0 or nc >= 8 or grid[nr][nc] == 0:
+                            perimeter += 1
+        return perimeter
 
     def can_place(self, grid, p, r, c):
         for pr in range(len(p)):
@@ -453,33 +499,3 @@ class LogicSolver:
         for j in cs:
             for i in range(8): ng[i][j] = 0
         return ng
-if __name__ == "__main__":
-    # ==========================================
-    # 1. 設定你的測試圖片路徑
-    # ==========================================
-    IMAGE_PATH = "9.jpg"  # <-- 請修改為你的圖片路徑
-    print(f"正在讀取圖片: {IMAGE_PATH} ...")
-    img = cv2.imread(IMAGE_PATH)
-    
-    if img is None:
-        print(f"❌ 錯誤：無法讀取圖片！請檢查檔案路徑或檔名是否正確。")
-        exit()
-
-    # ==========================================
-    # 2. 執行視覺辨識引擎 (VisionEngine)
-    # ==========================================
-    print("\n--- 啟動 VisionEngine 辨識 ---")
-    engine = VisionEngine(img)
-    success = engine.process()
-    
-    if not success:
-        print("❌ 棋盤定位失敗！請確認圖片中的棋盤邊框完整且沒有被嚴重遮擋。")
-        # 即使失敗，如果 debug 圖有建立，依然顯示出來看看問題出在哪
-        if engine.img_debug is not None:
-            cv2.imshow("Debug - Failed", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-            cv2.waitKey(0)
-        exit()
-        
-    print("✅ 視覺辨識成功！")
-    cv2.imshow("Debug - Success", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-    cv2.waitKey(0)
