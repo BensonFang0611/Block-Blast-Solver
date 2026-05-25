@@ -75,7 +75,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         
         new_entry = pd.DataFrame([{
             "Timestamp": now_tw, 
-            "Error_Type": err_type,
+            "feedback_Type": err_type,
             "Detailed_Info": detail_info,
             "Image_Link_Orig": img_url_orig,
             "Image_Link_Debug": img_url_debug
@@ -103,7 +103,7 @@ def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
                 cv2.imwrite(orig_path, cv_img)
                 url_orig = upload_to_imgbb(orig_path)
                 
-                # 自動定位失敗時，Error_Type 直接寫入 "自動定位失敗"
+                # 自動定位失敗時，feedback_Type 直接寫入 "自動定位失敗"
                 log_to_sheets(
                     err_type="自動定位失敗", 
                     detail_info=error_detail, 
@@ -243,7 +243,7 @@ if file:
     st.subheader("🚩 Feedback 錯誤回報")
     
     with st.form("feedback_form"):
-        error_type = st.selectbox(
+        feedback_Type = st.selectbox(
             "請選擇發生的錯誤類型：",
             [
                 "系統提示無解，但實際上還有解法",
@@ -258,12 +258,12 @@ if file:
         
         if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
-                # ✨ 移除「手動回報:」前綴，直接將選單的文字當成 Error_Type
-                final_type = error_type
+                # ✨ 移除「手動回報:」前綴，直接將選單的文字當成 feedback_Type
+                final_type = feedback_Type
                 
                 # 處理 Detailed_Info 的內容
-                final_detail = other_detail if "其他" in error_type else "未填寫補充說明"
-                if not "其他" in error_type and other_detail:
+                final_detail = other_detail if "其他" in feedback_Type else "未填寫補充說明"
+                if not "其他" in feedback_Type and other_detail:
                     final_detail = other_detail  # 非其他選項但有寫備註時，也存入詳細資訊
                 
                 os.makedirs("temp", exist_ok=True)
