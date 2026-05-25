@@ -412,7 +412,7 @@ class VisionEngine:
         return rect
 
 # =================================================================
-# 🚀 【終極解封版】：全域搜尋「自由順序擺放」消完後的最小總周長引擎
+# 🚀 【終極精準版】：全域搜尋「放完消除完後，內部空洞暴露面最小」的解題引擎
 # =================================================================
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
@@ -423,35 +423,34 @@ class LogicSolver:
         if path is None:
             # 這是來自 streamlit_app.py 的第一層呼叫
             best_path, _ = self._solve_core(grid, pieces, p_indices, [])
-            # 💡 只回傳純粹的步驟清單，長度絕對是 3，Streamlit 讀取完會精準顯示第 0~3 步！
+            # 💡 只回傳純粹的步驟清單（長度為3），Streamlit 讀取完會精準顯示第 0~3 步
             return best_path
         
         return self._solve_core(grid, pieces, p_indices, path)
 
     def _solve_core(self, grid, pieces, p_indices, path):
-        # 💡 基底條件：當 3 個方塊都依序模擬擺放，且各自的消行/消列都執行完畢後
+        # 💡 【基底條件】：當 3 個方塊都依序模擬擺放，且各自的消行/消列都執行完畢後
         if not p_indices: 
-            # 計算這個最終殘局盤面的「純粹總周長」並回傳。如果全消，周長就是完美的 0 分！
+            # 完全符合要求：直接計算這個最終殘局盤面的「純粹內部暴露面（分數）」並回傳
             return path, self.get_perimeter(grid)
 
         best_path = None
         min_perimeter = float('inf') 
 
-        # 🌟 【重大修正：解放順序】遍歷目前「所有還沒放」的方塊索引
-        # 演算法會自動窮舉 0->1->2, 1->2->0, 2->0->1 等全部 6 種擺放順序！
+        # 全域窮舉 6 種擺放順序（例如 0->1->2, 2->1->0...）
         for i in p_indices:
             p = pieces[i]
             p_rows = len(p)
             p_cols = len(p[0])
             
-            # 幾何剪枝：直接限制迴圈邊界
+            # 幾何剪枝：限制迴圈邊界，Streamlit 執行超快不卡死
             for r in range(9 - p_rows):
                 for c in range(9 - p_cols):
                     
                     # 快速碰撞檢查
                     if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
                         
-                        # 使用高速切片複製
+                        # 使用高速切片複製，擺脫極慢的 deepcopy
                         ng = [row[:] for row in grid]
                         
                         # 1. 實體放置當前這顆方塊
@@ -472,13 +471,13 @@ class LogicSolver:
                         # 記錄這一步的擺放細節 (包含它是哪個方塊 i)
                         current_placement = (i, r, c, rs, cs)
                         
-                        # 遞迴向下搜尋：💡 從剩餘的 p_indices 中排除當前已使用的 i
+                        # 遞迴向下搜尋：從剩餘的 p_indices 中排除當前已使用的 i
                         res_path, res_perimeter = self._solve_core(
                             ng, pieces, [idx for idx in p_indices if idx != i], 
                             path + [current_placement]
                         )
                         
-                        # 全域最優比較：尋找能讓最終殘局總周長最小（全消 = 0）的完美神解！
+                        # 💡 【核心修改點】：尋找能讓最終殘局內部空洞暴露面最小（全消 = 0）的完美神解！
                         if res_path is not None and res_perimeter < min_perimeter:
                             min_perimeter = res_perimeter
                             best_path = res_path
@@ -494,15 +493,25 @@ class LogicSolver:
         return True
 
     def get_perimeter(self, grid):
-        """ 計算 8x8 盤面剩餘方塊的總暴露邊緣（周長）"""
+        """ 
+        💡 【嚴格遵照規格改寫】：計算 8x8 盤面中「既沒有方塊也沒有牆壁」的暴露面分數
+        """
         perimeter = 0
         for r in range(8):
             for c in range(8):
                 if grid[r][c] == 1:
-                    if r == 0 or grid[r-1][c] == 0: perimeter += 1
-                    if r == 7 or grid[r+1][c] == 0: perimeter += 1
-                    if c == 0 or grid[r][c-1] == 0: perimeter += 1
-                    if c == 7 or grid[r][c+1] == 0: perimeter += 1
+                    # 門檻檢查：四面如果「有格子（不是牆壁）」且「格子是 0（沒有方塊）」才 +1
+                    # 滿足此條件代表該面暴露於盤面內部的純空洞中
+                    
+                    # 檢查上方
+                    if r > 0 and grid[r-1][c] == 0: perimeter += 1
+                    # 檢查下方
+                    if r < 7 and grid[r+1][c] == 0: perimeter += 1
+                    # 檢查左方
+                    if c > 0 and grid[r][c-1] == 0: perimeter += 1
+                    # 檢查右方
+                    if c < 7 and grid[r][c+1] == 0: perimeter += 1
+                    
         return perimeter
 
     def can_place(self, grid, p, r, c):
