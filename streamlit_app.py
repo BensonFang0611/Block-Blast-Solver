@@ -86,13 +86,6 @@ def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("否，取消", use_container_width=True):
-            st.session_state.dialog_closed = True
-            st.session_state.show_dialog = False
-            st.session_state.show_thanks_dialog = True
-            st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
-            st.rerun()
-    with col2:
         if st.button("是，回報錯誤", type="primary", use_container_width=True):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
@@ -105,6 +98,13 @@ def show_failure_dialog(eng, cv_img):
                 st.session_state.show_thanks_dialog = True
                 st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
                 st.rerun()
+    with col2:
+        if st.button("否，取消", use_container_width=True):
+            st.session_state.dialog_closed = True
+            st.session_state.show_dialog = False
+            st.session_state.show_thanks_dialog = True
+            st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
+            st.rerun()
 
 # --- 💡 第二個彈跳視窗：系統提示 ---
 @st.dialog("🔔 系統提示")
@@ -114,10 +114,10 @@ def show_thanks_dialog(msg):
         st.session_state.show_thanks_dialog = False
         st.rerun()
 
-# --- 主 UI 介面 ---
+# --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver")
-file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
+st.title("🧩 Block Blast Solver ")
+file = st.file_uploader("📸 上傳截圖(最近更新26/5/25)", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
     for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file"]:
@@ -141,13 +141,15 @@ if file:
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
+        # 呼叫後端標準接口
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         if sol:
+            # 💡 這裡會完美拿到長度為 3 的解法清單，radio 渲染出 0、1、2、3 共四個精準步驟按鈕！
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
             
-            # 每次重新渲染時，先拿完全乾淨的原圖透視底色當畫布
+            # --- 繪製解法示意圖 ---
             canvas = eng.warp_orig.copy()
             u = 400 / 8 
             
@@ -155,7 +157,7 @@ if file:
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
                 
-                # 1. 繪製當下這步的方塊本體與黑色小網格線
+                # 1. 繪製當下這步的方塊本體與格線
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
                         if p[pr][pc]:
@@ -164,30 +166,20 @@ if file:
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
                             
-                # 2. 💡【重大修復】：即時模擬真實消除
+                # 2. 當下結算消除印記 (讓動態順序的最優解可以被完美且直覺地渲染出來)
                 if cl_rs or cl_cs:
-                    # 如果這一步「不是」使用者停下來看的最後一步 ➔ 必須在畫布上將其「完全擦除」恢復成乾淨背景
-                    if s < idx - 1:
-                        if cl_rs:
-                            for cr in cl_rs:
-                                canvas[int(cr*u):int((cr+1)*u), :] = eng.warp_orig[int(cr*u):int((cr+1)*u), :]
-                        if cl_cs:
-                            for cc in cl_cs:
-                                canvas[:, int(cc*u):int((cc+1)*u)] = eng.warp_orig[:, int(cc*u):int((cc+1)*u)]
-                    else:
-                        # 如果這步「剛好是」使用者點擊停留觀看的最後一步 ➔ 繪製半透明灰色作為消除動畫提示
-                        overlay = canvas.copy()
-                        if cl_rs:
-                            for cr in cl_rs:
-                                cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-                        if cl_cs:
-                            for cc in cl_cs:
-                                cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                        cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
+                    overlay = canvas.copy()
+                    if cl_rs:
+                        for cr in cl_rs:
+                            cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
+                    if cl_cs:
+                        for cc in cl_cs:
+                            cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
+                    cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
                     
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
-            st.warning("此盤面無解 :..)")
+            st.warning("此盤面無解:..)")
             
         st.markdown("---")
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
@@ -218,6 +210,6 @@ with st.form("feedback_form"):
 
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-        Block Blast Solver Beta v2.2 | Powered by Color Sensing Engine
+        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
     </div>
 """, unsafe_allow_html=True)
