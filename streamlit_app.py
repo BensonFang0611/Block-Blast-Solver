@@ -66,14 +66,13 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets（更新為 5 欄結構） ---
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets（5 欄結構） ---
 def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_debug="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
         
-        # 嚴格對齊 5 欄位結構
         new_entry = pd.DataFrame([{
             "Timestamp": now_tw, 
             "Error_Type": err_type,
@@ -104,7 +103,7 @@ def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
                 cv2.imwrite(orig_path, cv_img)
                 url_orig = upload_to_imgbb(orig_path)
                 
-                # 自動回報：錯誤類別帶入 "自動定位失敗"，詳細資訊帶入具體報錯訊息
+                # 自動定位失敗時，Error_Type 直接寫入 "自動定位失敗"
                 log_to_sheets(
                     err_type="自動定位失敗", 
                     detail_info=error_detail, 
@@ -239,7 +238,7 @@ if file:
     elif st.session_state.get("show_thanks_dialog", False):
         show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
-    # --- 2. Feedback 回饋系統（手動回報區：類別與詳細資訊徹底拆分） ---
+    # --- 2. Feedback 回饋系統 ---
     st.markdown("---")
     st.subheader("🚩 Feedback 錯誤回報")
     
@@ -259,8 +258,13 @@ if file:
         
         if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
-                # 處理手動回報的寫入數據
+                # ✨ 移除「手動回報:」前綴，直接將選單的文字當成 Error_Type
+                final_type = error_type
+                
+                # 處理 Detailed_Info 的內容
                 final_detail = other_detail if "其他" in error_type else "未填寫補充說明"
+                if not "其他" in error_type and other_detail:
+                    final_detail = other_detail  # 非其他選項但有寫備註時，也存入詳細資訊
                 
                 os.makedirs("temp", exist_ok=True)
                 orig_path = "temp/feedback_orig.jpg"
@@ -269,7 +273,7 @@ if file:
                 # 儲存固定畫質的原圖
                 cv2.imwrite(orig_path, cv_img)
                 
-                # 檢查是否有產出 debug 圖片，如果沒有就傳原圖
+                # 檢查是否有產出 debug 圖片
                 has_debug = 'eng' in locals() and hasattr(eng, 'img_debug') and eng.img_debug is not None
                 cv2.imwrite(debug_path, eng.img_debug if has_debug else cv_img)
                 
@@ -277,7 +281,7 @@ if file:
                 url_orig = upload_to_imgbb(orig_path)
                 url_debug = upload_to_imgbb(debug_path) if has_debug else "None"
                 
-                # 寫入 5 欄 (將類別與詳細資訊分開傳入)
+                # 寫入 5 欄 (已修正為帶入正確的變數名稱)
                 if log_to_sheets(err_type=final_type, detail_info=final_detail, img_url_orig=url_orig, img_url_debug=url_debug):
                     st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
