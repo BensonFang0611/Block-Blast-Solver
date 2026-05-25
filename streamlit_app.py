@@ -45,6 +45,7 @@ def get_combined_pieces_image(detected_pieces):
     h, w, c = piece_imgs[0].shape
     gap_width = 15
     black_gap = np.zeros((h, gap_width, c), dtype=np.uint8)
+    
     stack_list = []
     for i, img in enumerate(piece_imgs):
         stack_list.append(img)
@@ -65,13 +66,20 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets ---
-def log_to_sheets(msg, img_url="None"):
+# --- 🛠️ 輔助功能 4：紀錄到 Google Sheets (支援原圖與Debug圖雙網址) ---
+def log_to_sheets(msg, img_url_orig="None", img_url_debug="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-        new_entry = pd.DataFrame([{"Timestamp": now_tw, "Comment": msg, "Image_Link": img_url}])
+        
+        new_entry = pd.DataFrame([{
+            "Timestamp": now_tw, 
+            "Comment": msg, 
+            "Image_Link_Orig": img_url_orig,
+            "Image_Link_Debug": img_url_debug
+        }])
+        
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=updated_df)
@@ -89,10 +97,22 @@ def show_failure_dialog(eng, cv_img):
         if st.button("回報錯誤", type="primary", use_container_width=True):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
-                report_path = "temp/feedback_auto.jpg"
-                cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
-                url = upload_to_imgbb(report_path)
-                log_to_sheets("無法定位棋盤", url)
+                
+                # 定義兩張照片的路徑
+                orig_path = "temp/feedback_auto_orig.jpg"
+                debug_path = "temp/feedback_auto_debug.jpg"
+                
+                # 分別寫入固定畫質的原圖與 Debug 圖
+                cv2.imwrite(orig_path, cv_img)
+                cv2.imwrite(debug_path, eng.img_debug if 'eng' in locals() and hasattr(eng, 'img_debug') else cv_img)
+                
+                # 依序上傳
+                url_orig = upload_to_imgbb(orig_path)
+                url_debug = upload_to_imgbb(debug_path)
+                
+                # 紀錄到 Sheets
+                log_to_sheets("無法定位棋盤", url_orig, url_debug)
+                
                 st.session_state.dialog_closed = True
                 st.session_state.show_dialog = False
                 st.session_state.show_thanks_dialog = True
@@ -144,21 +164,19 @@ if file:
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
 
-    # --- 🎯 影像預處理：自動縮放與壓縮機制 ---
-    # 取得原始尺寸
+    # --- 🎯 影像預處理：在判定前先降低至固定畫質（不壓縮畫質） ---
     h, w = cv_img.shape[:2]
-
-    # 設定目標最大寬度（例如 1080 像素，既保留格線，又濾除高頻雜訊）
     MAX_WIDTH = 1080 
     if w > MAX_WIDTH:
         scale = MAX_WIDTH / w
         new_w = int(w * scale)
         new_h = int(h * scale)
-        # 使用 INTER_AREA 進行縮小，這種內插法自帶抗鋸齒效果，最適合縮小圖片
+        # 使用 INTER_AREA 自帶抗鋸齒，最適合縮小大圖至固定解析度
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 初始化辨識引擎（此時傳進去的是優化過尺寸的影像）
+    # 初始化辨識引擎（此時傳進去的是固定畫質的影像）
     eng = VisionEngine(cv_img)
+
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
@@ -196,7 +214,7 @@ if file:
                         for cc in cl_cs:
                             cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
                     cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-                
+                    
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("此盤面無解:..)")
@@ -213,27 +231,39 @@ if file:
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
-# ==========================================
-# 💡 彈跳視窗互斥控制中心
-# ==========================================
-if st.session_state.get("show_dialog", False):
-    show_failure_dialog(eng, cv_img)
-elif st.session_state.get("show_thanks_dialog", False):
-    show_thanks_dialog(st.session_state.get("thanks_msg", ""))
+    # ==========================================
+    # 💡 彈跳視窗互斥控制中心
+    # ==========================================
+    if st.session_state.get("show_dialog", False):
+        show_failure_dialog(eng, cv_img)
+    elif st.session_state.get("show_thanks_dialog", False):
+        show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
-# --- 2. Feedback 回饋系統 ---
-st.markdown("---")
-st.subheader("🚩 Feedback 錯誤回報")
-with st.form("feedback_form"):
-    msg = st.text_input("如果有辨識錯誤，請告訴我!!")
-    if st.form_submit_button("🚀 送出"):
-        with st.spinner("同步中..."):
-            os.makedirs("temp", exist_ok=True)
-            report_path = "temp/feedback.jpg"
-            cv2.imwrite(report_path, eng.img_debug if 'eng' in locals() else cv_img)
-            url = upload_to_imgbb(report_path)
-            if log_to_sheets(msg, url):
-                st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
+    # --- 2. Feedback 回饋系統 ---
+    st.markdown("---")
+    st.subheader("🚩 Feedback 錯誤回報")
+    
+    with st.form("feedback_form"):
+        msg = st.text_input("如果有辨識錯誤，請告訴我!!")
+        if st.form_submit_button("🚀 送出"):
+            with st.spinner("同步中..."):
+                os.makedirs("temp", exist_ok=True)
+                
+                # 1. 定義手動回報的兩張照片路徑
+                orig_path = "temp/feedback_orig.jpg"
+                debug_path = "temp/feedback_debug.jpg"
+                
+                # 2. 儲存固定畫質後的原圖與帶有標記的 Debug 圖（不作額外品質壓縮）
+                cv2.imwrite(orig_path, cv_img)
+                cv2.imwrite(debug_path, eng.img_debug if 'eng' in locals() else cv_img)
+                
+                # 3. 分別上傳並取得各自網址
+                url_orig = upload_to_imgbb(orig_path)
+                url_debug = upload_to_imgbb(debug_path)
+                
+                # 4. 同時將兩張圖寫入 Google Sheets
+                if log_to_sheets(msg, url_orig, url_debug):
+                    st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
 
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
