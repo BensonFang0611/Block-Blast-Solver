@@ -241,16 +241,16 @@ if file:
         error_type = st.selectbox(
             "請選擇發生的錯誤類型：",
             [
+                "系統提示無解，但實際上還有解法",
                 "大棋盤格辨識錯誤",
                 "下方待放方塊辨識錯誤",
-                "系統提示無解，但實際上還有解法",
                 "點擊步驟切換時，畫面顯示異常",
                 "其他（請在下方補充說明）"
             ]
         )
         
         # 提供給選擇「其他」或需要補充細節的文字輸入框
-        other_detail = st.text_input("其他原因或詳細補充說明：")
+        other_detail = st.text_input("其他原因或詳細補充說明：(選填)")
         
         if st.form_submit_button("🚀 送出"):
             with st.spinner("同步中..."):
