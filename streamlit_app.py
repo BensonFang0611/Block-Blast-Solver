@@ -141,11 +141,24 @@ if file:
             st.session_state.logged_file = current_file_id
 
     # 讀取影像
-    raw_pil_img = Image.open(file)
-    cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
-    
-    # 初始化辨識引擎
-    eng = VisionEngine(cv_img)
+raw_pil_img = Image.open(file)
+cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
+
+# --- 🎯 影像預處理：自動縮放與壓縮機制 ---
+# 取得原始尺寸
+h, w = cv_img.shape[:2]
+
+# 設定目標最大寬度（例如 1080 像素，既保留格線，又濾除高頻雜訊）
+MAX_WIDTH = 1080 
+if w > MAX_WIDTH:
+    scale = MAX_WIDTH / w
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    # 使用 INTER_AREA 進行縮小，這種內插法自帶抗鋸齒效果，最適合縮小圖片
+    cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+# 初始化辨識引擎（此時傳進去的是優化過尺寸的影像）
+eng = VisionEngine(cv_img)
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
