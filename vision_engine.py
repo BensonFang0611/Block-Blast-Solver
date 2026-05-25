@@ -412,68 +412,79 @@ class VisionEngine:
         return rect
 
 # =================================================================
-# 🚀 【終極高速周長優化版】：結合物理計分法，完美相容原版前端接口
+# 🚀 【終極高速周長優化版】：全域搜尋「周長-消除權橫大師」解題引擎
 # =================================================================
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
-        """ Streamlit 專用主接口 """
+        """ 
+        Streamlit 專用主接口：
+        保持與舊版完全相同的呼叫參數，但在內部執行（周長 + 消除獎勵）的全域最優化搜尋。
+        """
         if path is None:
-            best_path, _ = self._solve_core(grid, pieces, p_indices, [])
+            # 💡 傳入初始累積消除數為 0
+            best_path, _ = self._solve_core(grid, pieces, p_indices, [], 0)
             return best_path
-        return self._solve_core(grid, pieces, p_indices, path)
+        
+        return self._solve_core(grid, pieces, p_indices, path, 0)
 
-    def _solve_core(self, grid, pieces, p_indices, path):
-        # 💡 基底條件：當 3 個方塊都模擬擺放完畢時
+    def _solve_core(self, grid, pieces, p_indices, path, accumulated_cleared=0):
+        # 💡 基底條件：當所有待放方塊都順利排放完畢時
         if not p_indices: 
-            # 💡 【終極計分公式】：(剩餘殘留方塊總數 * 4) + 最終暴露總周長
-            # 這能完美呼應「消除方塊後的周長」。方塊被消掉後，雖然會稍微增加鄰近方塊的周長，
-            # 但因為方塊總數暴跌（減 8 顆方塊等於大扣 32 分），所以演算法會百分之百自動熱衷於消行！
-            score = self.get_active_cells(grid) * 4 + self.get_perimeter(grid)
-            return path, score
+            # 終極公式：周長 - (消除行數 * 32)
+            # 每消除一行給予 32 分巨大獎勵，完美抵消並超越因消行而產生的 jagged canyon（鋸齒峽谷周長增加）
+            final_score = self.get_perimeter(grid) - (accumulated_cleared * 32)
+            return path, final_score
 
         best_path = None
         min_score = float('inf') 
 
-        # 遍歷目前剩餘的所有方塊（順序對齊前端，由 0 ➔ 1 ➔ 2 推進）
-        i = p_indices[0]
-        p = pieces[i]
-        p_rows = len(p)
-        p_cols = len(p[0])
-        
-        # 幾何剪枝高速過濾
-        for r in range(9 - p_rows):
-            for c in range(9 - p_cols):
-                if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
+        # 遍歷目前剩餘的所有方塊（自動尋找最佳調換順序）
+        for i in p_indices:
+            p = pieces[i]
+            p_rows = len(p)
+            p_cols = len(p[0])
+            
+            # 幾何剪枝：直接限制迴圈邊界
+            for r in range(9 - p_rows):
+                for c in range(9 - p_cols):
                     
-                    # 快速切片複製
-                    ng = [row[:] for row in grid]
-                    
-                    # 實體放置方塊
-                    for pr in range(p_rows):
-                        for pc in range(p_cols):
-                            if p[pr][pc]:
-                                ng[r+pr][c+pc] = 1
-                    
-                    # 即時計算消行與消列
-                    rs = [idx for idx, row in enumerate(ng) if all(row)]
-                    cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
-                    
-                    # 執行物理消除
-                    for row_idx in rs: ng[row_idx] = [0]*8
-                    for col_idx in cs:
-                        for row_idx in range(8): ng[row_idx][col_idx] = 0
-                    
-                    current_placement = (i, r, c, rs, cs)
-                    
-                    # 遞迴向下搜尋
-                    res_path, res_score = self._solve_core(
-                        ng, pieces, p_indices[1:], 
-                        path + [current_placement]
-                    )
-                    
-                    if res_path is not None and res_score < min_score:
-                        min_score = res_score
-                        best_path = res_path
+                    # 快速檢查該位置是否衝突
+                    if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
+                        
+                        # 使用高速切片複製
+                        ng = [row[:] for row in grid]
+                        
+                        # 實體放置方塊
+                        for pr in range(p_rows):
+                            for pc in range(p_cols):
+                                if p[pr][pc]:
+                                    ng[r+pr][c+pc] = 1
+                        
+                        # 即時計算消行與消列
+                        rs = [idx for idx, row in enumerate(ng) if all(row)]
+                        cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
+                        
+                        # 執行消除
+                        for row_idx in rs: ng[row_idx] = [0]*8
+                        for col_idx in cs:
+                            for row_idx in range(8): ng[row_idx][col_idx] = 0
+                        
+                        # 記錄本次投放細節
+                        current_placement = (i, r, c, rs, cs)
+                        
+                        # 💡 計算這一步消了幾行/幾列
+                        step_cleared = len(rs) + len(cs)
+                        
+                        # 遞迴向下搜尋，並將消除行數累加傳遞下去
+                        res_path, res_score = self._solve_core(
+                            ng, pieces, [idx for idx in p_indices if idx != i], 
+                            path + [current_placement], accumulated_cleared + step_cleared
+                        )
+                        
+                        # 全域最優比較：挑選最終綜合分數最低（最密實且消行最多）的解
+                        if res_path is not None and res_score < min_score:
+                            min_score = res_score
+                            best_path = res_path
                                 
         return best_path, min_score
 
@@ -484,10 +495,6 @@ class LogicSolver:
                 if p[pr][pc] and grid[r+pr][c+pc]:
                     return False
         return True
-
-    def get_active_cells(self, grid):
-        """ 計算盤面上目前還殘留著幾顆方塊 """
-        return sum(sum(row) for row in grid)
 
     def get_perimeter(self, grid):
         """ 計算 8x8 盤面剩餘方塊的總暴露邊緣（周長）"""
