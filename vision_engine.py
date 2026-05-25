@@ -60,6 +60,8 @@ class VisionEngine:
         self.grid_state = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         
         self.img_debug = self.img_orig.copy()
+
+
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
@@ -96,6 +98,8 @@ class VisionEngine:
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
         thresh_v = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
+        # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
+        # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
         proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
         proj_x = np.sum(thresh_v[sy:sy+sh, sx:sx+sw], axis=0) / 255
@@ -446,4 +450,4 @@ class LogicSolver:
         for i in rs: ng[i] = [0]*8
         for j in cs:
             for i in range(8): ng[i][j] = 0
-        return ng 
+        return ng
