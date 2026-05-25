@@ -60,8 +60,6 @@ class VisionEngine:
         self.grid_state = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         
         self.img_debug = self.img_orig.copy()
-
-
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
@@ -98,8 +96,6 @@ class VisionEngine:
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
         thresh_v = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
-        # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
         proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
         proj_x = np.sum(thresh_v[sy:sy+sh, sx:sx+sw], axis=0) / 255
@@ -367,12 +363,10 @@ class VisionEngine:
             if has_pieces:
                 if grid in self.legal_grids:
                     final_grid = grid
-                    print(f"方塊({ox},{oy}) 成功使用背景相對比較法 [{channel}] 通道通關！")
                     break
         
         if final_grid is None:
             final_grid = grid
-            print(f"⚠️ 方塊({ox},{oy}) 背景相對比較未完全命中合法角度，啟動安全保底。")
 
         # ==========================================
         # 視覺化邊框繪製（完美對齊校正後的精準左上角）
@@ -452,34 +446,4 @@ class LogicSolver:
         for i in rs: ng[i] = [0]*8
         for j in cs:
             for i in range(8): ng[i][j] = 0
-        return ng
-if __name__ == "__main__":
-    # ==========================================
-    # 1. 設定你的測試圖片路徑
-    # ==========================================
-    IMAGE_PATH = "9.jpg"  # <-- 請修改為你的圖片路徑
-    print(f"正在讀取圖片: {IMAGE_PATH} ...")
-    img = cv2.imread(IMAGE_PATH)
-    
-    if img is None:
-        print(f"❌ 錯誤：無法讀取圖片！請檢查檔案路徑或檔名是否正確。")
-        exit()
-
-    # ==========================================
-    # 2. 執行視覺辨識引擎 (VisionEngine)
-    # ==========================================
-    print("\n--- 啟動 VisionEngine 辨識 ---")
-    engine = VisionEngine(img)
-    success = engine.process()
-    
-    if not success:
-        print("❌ 棋盤定位失敗！請確認圖片中的棋盤邊框完整且沒有被嚴重遮擋。")
-        # 即使失敗，如果 debug 圖有建立，依然顯示出來看看問題出在哪
-        if engine.img_debug is not None:
-            cv2.imshow("Debug - Failed", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-            cv2.waitKey(0)
-        exit()
-        
-    print("✅ 視覺辨識成功！")
-    cv2.imshow("Debug - Success", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-    cv2.waitKey(0)
+        return ng 
