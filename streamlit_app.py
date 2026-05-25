@@ -86,7 +86,7 @@ def show_failure_dialog(eng, cv_img):
     st.write("無法定位棋盤，請問您是否回報錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("局，回報錯誤", type="primary", use_container_width=True):
+        if st.button("是，回報錯誤", type="primary", use_container_width=True):
             with st.spinner("正在上傳回報資料..."):
                 os.makedirs("temp", exist_ok=True)
                 report_path = "temp/feedback_auto.jpg"
@@ -117,49 +117,42 @@ def show_thanks_dialog(msg):
 # --- 1. UI 介面 ---
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
 st.title("🧩 Block Blast Solver ")
-
 file = st.file_uploader("📸 上傳截圖(最近更新26/5/25)", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
-    # 💡 防呆機制 1：使用者按「X」清空圖片時，瞬間洗掉所有對話框的記憶
     for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file"]:
         st.session_state.pop(key, None)
 
 if file:
-    # 取得這次上傳的「唯一識別碼」
     current_file_id = getattr(file, "file_id", str(file.size) + file.name)
-    
-    # 💡 防呆機制 2：只要是新的上傳動作，就完全解開封印重置對話框
     if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
         for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg"]:
             st.session_state.pop(key, None)
         st.session_state.last_file_id = current_file_id
         
-    # ✨ User Visit 簽到機制
     if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
         if log_to_sheets("User Visit"):
             st.session_state.logged_file = current_file_id
 
-    # 讀取影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
     
-    # 初始化辨識引擎
     eng = VisionEngine(cv_img)
     if eng.process():
         st.header("💡 解法建議")
         solver = LogicSolver()
+        # 呼叫後端標準接口
         sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         if sol:
+            # 💡 這裡會完美拿到長度為 3 的解法清單，radio 渲染出 0、1、2、3 共四個精準步驟按鈕！
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
             
             # --- 繪製解法示意圖 ---
             canvas = eng.warp_orig.copy()
-            u = 400 / 8
+            u = 400 / 8 
             
-            # 依照時間軸依序繪製每一步的方塊與消除印記
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
                 p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
@@ -173,7 +166,7 @@ if file:
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
                             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
                             
-                # 2. 當下結算消除印記 (這樣下一步的方塊就會正常蓋過它)
+                # 2. 當下結算消除印記 (讓動態順序的最優解可以被完美且直覺地渲染出來)
                 if cl_rs or cl_cs:
                     overlay = canvas.copy()
                     if cl_rs:
@@ -183,32 +176,25 @@ if file:
                         for cc in cl_cs:
                             cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
                     cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-                
+                    
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
             st.warning("此盤面無解:..)")
             
-        # 待放方塊預覽
         st.markdown("---")
         combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
         if combined_piece_img is not None:
             st.image(combined_piece_img, caption="偵測到的待放方塊 (並排預覽)", channels="BGR", use_container_width=True)
-            
     else:
-        # ❌ 辨識失敗
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
-# ==========================================
-# 💡 彈跳視窗互斥控制中心
-# ==========================================
 if st.session_state.get("show_dialog", False):
     show_failure_dialog(eng, cv_img)
 elif st.session_state.get("show_thanks_dialog", False):
     show_thanks_dialog(st.session_state.get("thanks_msg", ""))
 
-# --- 2. Feedback 回饋系統 ---
 st.markdown("---")
 st.subheader("🚩 Feedback 錯誤回報")
 with st.form("feedback_form"):
