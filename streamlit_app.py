@@ -75,7 +75,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         
         new_entry = pd.DataFrame([{
             "Timestamp": now_tw, 
-            "feedback_Type": err_type,
+            "Feedback_Type": err_type,
             "Detailed_Info": detail_info,
             "Image_Link_Orig": img_url_orig,
             "Image_Link_Debug": img_url_debug
