@@ -61,7 +61,6 @@ class VisionEngine:
         
         self.img_debug = self.img_orig.copy()
 
-        cv2.imshow("grid_state", cv2.resize(self.grid_state, (0, 0), fx=0.4, fy=0.4))
 
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
@@ -97,10 +96,8 @@ class VisionEngine:
         kernel_h, kernel_v = np.ones((1, 101), np.uint8), np.ones((101, 1), np.uint8)
         thresh_h = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_h)
         thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
-        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
         thresh_v = cv2.morphologyEx(thresh_vch, cv2.MORPH_OPEN, kernel_v)
         thresh_v = cv2.morphologyEx(thresh_v, cv2.MORPH_CLOSE, kernel_v)
-        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
         # 💡 [關鍵架構修改]：不需要額外複製 img_roi_color 了，我們直接畫在 self.img_debug 上！
         # (你可以把原本的 img_roi_color = ... 那行刪掉)
         
@@ -186,7 +183,7 @@ class VisionEngine:
             return exact_min, exact_max
 
         # ==========================================
-        # 呼叫與保險機制 (移除 cv2.imshow 彈出視窗)
+        # 呼叫與保險機制
         # ==========================================
         # 分別解析 Y 軸與 X 軸 (參數減少，不再傳入 img_roi)
         min_y, max_y = get_exact_edges_from_roi_debug(proj_y, sy, by, is_horizontal=True)
@@ -280,6 +277,9 @@ class VisionEngine:
             self.detected_pieces.append(parsed_grid)
 
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
+        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
+        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
+        cv2.imshow("grid_state", cv2.resize(self.grid_state, (0, 0), fx=0.4, fy=0.4))
         return True
 
     # ===================================================
@@ -456,3 +456,33 @@ class LogicSolver:
         for j in cs:
             for i in range(8): ng[i][j] = 0
         return ng
+if __name__ == "__main__":
+    # ==========================================
+    # 1. 設定你的測試圖片路徑
+    # ==========================================
+    IMAGE_PATH = "9.jpg"  # <-- 請修改為你的圖片路徑
+    print(f"正在讀取圖片: {IMAGE_PATH} ...")
+    img = cv2.imread(IMAGE_PATH)
+    
+    if img is None:
+        print(f"❌ 錯誤：無法讀取圖片！請檢查檔案路徑或檔名是否正確。")
+        exit()
+
+    # ==========================================
+    # 2. 執行視覺辨識引擎 (VisionEngine)
+    # ==========================================
+    print("\n--- 啟動 VisionEngine 辨識 ---")
+    engine = VisionEngine(img)
+    success = engine.process()
+    
+    if not success:
+        print("❌ 棋盤定位失敗！請確認圖片中的棋盤邊框完整且沒有被嚴重遮擋。")
+        # 即使失敗，如果 debug 圖有建立，依然顯示出來看看問題出在哪
+        if engine.img_debug is not None:
+            cv2.imshow("Debug - Failed", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
+            cv2.waitKey(0)
+        exit()
+        
+    print("✅ 視覺辨識成功！")
+    cv2.imshow("Debug - Success", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
+    cv2.waitKey(0)
