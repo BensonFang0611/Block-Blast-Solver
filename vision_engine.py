@@ -277,9 +277,6 @@ class VisionEngine:
             self.detected_pieces.append(parsed_grid)
 
         cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
-        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
-        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
-        cv2.imshow("grid_state", cv2.resize(self.grid_state, (0, 0), fx=0.4, fy=0.4))
         return True
 
     # ===================================================
