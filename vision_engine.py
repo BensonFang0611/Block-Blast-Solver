@@ -254,14 +254,23 @@ class VisionEngine:
                 
             self.grid_state[r][c] = 1 if is_block else 0
             
-            # 保持你原本的 Debug 畫線功能
-            border_color = (0, 255, 0) if is_block else (120, 120, 120)
-            cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
+            # === 💡 [重新設計的 8x8 Debug 繪圖邏輯] ===
+            sampling_poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.35, 0.65).astype(np.int32)
             
-            # (選填 Debug) 在被選為底色基準的那一格畫個藍點，方便你觀察對不對
-            if r == best_empty_cell[0] and c == best_empty_cell[1]:
-                cv2.circle(self.img_debug, (int((gx_s+gx_e)/2), int((gy_s+gy_e)/2)), 5, (255, 0, 0), -1)
+            # A. 核心採樣區：空格為實心灰色，有塊為「空心白色」小方格（同步待放物邏輯）
+            if is_block:
+                cv2.polylines(self.img_debug, [sampling_poly_pts], True, (255, 255, 255), 3, cv2.LINE_AA)
+            else:
+                cv2.fillPoly(self.img_debug, [sampling_poly_pts], (120, 120, 120))
 
+            # B. 外框顏色基礎：一律使用灰色（沒有大白框）
+            border_color = (120, 120, 120)
+            
+            # C. 🎯 綠色「只」圈起被選中的最佳底色方塊外框
+            if r == best_empty_cell[0] and c == best_empty_cell[1]:
+                border_color = (0, 255, 0)
+            
+            cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
         # ==========================================
         # 4. 全域採樣待放區 (避開廣告)
         # ==========================================
@@ -309,9 +318,6 @@ class VisionEngine:
             self.detected_pieces.append(parsed_grid)
 
         cv2.polylines(self.img_debug, [self.pts1.astype(int)], True, (0, 255, 0), 3)
-        cv2.imshow("Horizontal Lines", cv2.resize(thresh_h[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
-        cv2.imshow("Vertical Lines", cv2.resize(thresh_v[sy:sy+sh, sx:sx+sw], (0, 0), fx=0.4, fy=0.4))
-        cv2.imshow("grid_state", cv2.resize(self.img_debug, (0, 0), fx=0.4, fy=0.4))
         return True
 
     # ===================================================
@@ -402,12 +408,10 @@ class VisionEngine:
             if has_pieces:
                 if grid in self.legal_grids:
                     final_grid = grid
-                    print(f"方塊({ox},{oy}) 成功使用背景相對比較法 [{channel}] 通道通關！")
                     break
         
         if final_grid is None:
             final_grid = grid
-            print(f"⚠️ 方塊({ox},{oy}) 背景相對比較未完全命中合法角度，啟動安全保底。")
 
         # ==========================================
         # 視覺化邊框繪製（完美對齊校正後的精準左上角）
@@ -457,18 +461,10 @@ class LogicSolver:
         
         # 轉成標準的 0-1 矩陣，避免外部分析時物件型態污染
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
-        
-        print("\n🤖 [AI 評估日誌]：開始全域窮舉所有排列組合...")
-        
+            
         # 啟動深度優先搜尋
         self._solve_dfs(clean_grid, pieces, p_indices, [])
-        
-        print(f"📊 [AI 評估結束]：全域共掃描到 {self.total_scanned_solutions} 組可行解。")
-        if self.global_best_path is not None:
-            print(f"🏆 最終篩選出的全域「最小內部周長」分數為: {self.global_min_perimeter}")
-        else:
-            print("❌ 警告：全域搜尋完畢，找不到任何一組可以完全放下三個方塊的解。")
-            
+
         return self.global_best_path
 
     def _solve_dfs(self, grid, pieces, p_indices, current_path):
@@ -570,112 +566,3 @@ class LogicSolver:
         for j in cs:
             for i in range(8): ng[i][j] = 0
         return ng
-    
-if __name__ == "__main__":
-    # ==========================================
-    # 1. 設定你的測試圖片路徑
-    # ==========================================
-    IMAGE_PATH = "1.jpg"  # <-- 請修改為你的圖片路徑
-    print(f"正在讀取圖片: {IMAGE_PATH} ...")
-    img = cv2.imread(IMAGE_PATH)
-    
-    if img is None:
-        print(f"❌ 錯誤：無法讀取圖片！請檢查檔案路徑或檔名是否正確。")
-        exit()
-
-    # ==========================================
-    # 2. 執行視覺辨識引擎 (VisionEngine)
-    # ==========================================
-    print("\n--- 啟動 VisionEngine 辨識 ---")
-    engine = VisionEngine(img)
-    success = engine.process()
-    
-    if not success:
-        print("❌ 棋盤定位失敗！")
-        if engine.img_debug is not None:
-            cv2.imshow("Debug - Failed", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-            cv2.waitKey(0)
-        exit()
-        
-    print("✅ 視覺辨識成功！")
-    
-    current_grid = engine.grid_state
-    pieces = engine.detected_pieces
-
-    # ==========================================
-    # 3. 呼叫解題引擎 (LogicSolver)
-    # ==========================================
-    print("\n--- 啟動 LogicSolver 尋找最優解 ---")
-    solver = LogicSolver()
-    p_indices = list(range(len(pieces)))
-    best_path = solver.solve(current_grid, pieces, p_indices)
-    
-    # ==========================================
-    # 4. 💡 視覺化：將解題結果直接繪製到 engine.img_debug 上
-    # ==========================================
-    if best_path is None:
-        print("❌ 殘念！目前盤面與方塊組合無解。")
-        cv2.putText(engine.img_debug, "NO SOLUTION", (50, 100), 
-                    cv2.FONT_HERSHEY_DUPLEX, 2, (0, 0, 255), 3, cv2.LINE_AA)
-    else:
-        print("\n🔥 找到最優解！正在將擺放結果繪製到 Debug 影像上...")
-        
-        # 為了畫出漂亮的半透明填滿效果，建立一個覆蓋層（Overlay）
-        overlay = engine.img_debug.copy()
-        
-        # 定義 3 個步驟各自使用的顏色 (BGR) 分別為：第1步青色、第2步橘色、第3步洋紅色
-        step_colors = [
-            (255, 255, 0),   # Step 1: 青色 (Cyan)
-            (0, 165, 255),   # Step 2: 橘色 (Orange)
-            (255, 0, 255)    # Step 3: 洋紅 (Magenta)
-        ]
-        
-        if not hasattr(engine, 'pts1'):
-            # 保險防呆：如果沒改 VisionEngine，就用粗略大框的 8 等分來畫
-            # 為了完美呈現，建議在 VisionEngine 內的 `pts1 = self.order_points(...)` 後面加上 `self.pts1 = pts1`
-            print("⚠️ 提示：請在 VisionEngine.process() 的 pts1 定義後加上 self.pts1 = pts1 以獲得最精準對齊。")
-            
-        for step_idx, placement in enumerate(best_path):
-            p_idx, r, c, cleared_rows, cleared_cols = placement
-            p = pieces[p_idx]
-            color = step_colors[step_idx % len(step_colors)]
-            
-            # 遍歷這個方塊的每一個小格
-            for pr in range(len(p)):
-                for pc in range(len(p[0])):
-                    if p[pr][pc]:
-                        curr_r = r + pr
-                        curr_c = c + pc
-                        
-                        # 算出該網格在影像上的四角多邊形座標 (精準對齊)
-                        if hasattr(engine, 'pts1'):
-                            poly_pts = engine.get_cell_poly(engine.pts1, curr_r, curr_c).astype(np.int32)
-                        else:
-                            # 這是無 self.pts1 時的替代粗略算法
-                            continue
-                        
-                        # 1. 在覆蓋層畫上實心顏色
-                        cv2.fillPoly(overlay, [poly_pts], color)
-                        # 2. 在原 debug 圖畫上顯眼外框
-                        cv2.polylines(engine.img_debug, [poly_pts], True, color, 3, cv2.LINE_AA)
-                        
-                        # 在方塊的第一個格子寫上步驟數字 (例如 1, 2, 3)
-                        if pr == 0 and pc == 0:
-                            centroid = np.mean(poly_pts, axis=0).astype(int)
-                            text = f"S{step_idx+1}(P{p_idx})" # S1(P0) 代表第1步放方塊0
-                            cv2.putText(engine.img_debug, text, (centroid[0]-25, centroid[1]+8), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-            
-            print(f"步驟 {step_idx+1}: 將 [方塊 {p_idx}] 放於 (Row:{r}, Col:{c})")
-            
-        # 將半透明覆蓋層混色回去 (透明度 0.4)
-        cv2.addWeighted(overlay, 0.4, engine.img_debug, 0.6, 0, engine.img_debug)
-
-    # ==========================================
-    # 5. 顯示最終疊加了解題步驟的視覺化結果
-    # ==========================================
-    cv2.imshow("Debug - Success with Solution", cv2.resize(engine.img_debug, (0, 0), fx=0.4, fy=0.4))
-    print("\n🎉 影像已更新！畫面上：\n- 青色區塊 = 第 1 步\n- 橘色區塊 = 第 2 步\n- 洋紅區塊 = 第 3 步")
-    print("按任意鍵關閉視窗...")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
