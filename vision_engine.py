@@ -64,15 +64,14 @@ class VisionEngine:
         thresh_g = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
         thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_OPEN, kernel_g)
         thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, kernel_g)
-        self.grid_state = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-        
+        self.board_mask = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         self.img_debug = self.img_orig.copy()
 
 
         # ==========================================
         # 2. 定位棋盤（亞像素質心擬合 + 對比視覺化）
         # ==========================================
-        board_thresh = cv2.morphologyEx(self.grid_state, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+        board_thresh = cv2.morphologyEx(self.board_mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
         cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts: return False
 
@@ -630,7 +629,6 @@ if __name__ == "__main__":
             (0, 165, 255),   # Step 2: 橘色 (Orange)
             (255, 0, 255)    # Step 3: 洋紅 (Magenta)
         ]
-        cnts, _ = cv2.findContours(engine.grid_state, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not hasattr(engine, 'pts1'):
             # 保險防呆：如果沒改 VisionEngine，就用粗略大框的 8 等分來畫
