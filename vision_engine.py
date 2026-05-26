@@ -19,6 +19,7 @@ class VisionEngine:
     def _generate_rotated_pieces(self, base_pieces):
         """ 智慧核心：傳入基本方塊原型，自動衍生出 4 個旋轉角度(0, 90, 180, 270) 的特徵 """
         if not base_pieces:
+            # 如果使用者沒設定，預設提供標準益智遊戲方塊原型
             base_pieces = [
                 [[1]],                                  # 1x1 方塊
                 [[1, 1]],                               # 1x2 長條
@@ -89,9 +90,9 @@ class VisionEngine:
         rough_box = max(candidates, key=lambda c: c['area'])
         bx, by, bw, bh = rough_box['bx'], rough_box['by'], rough_box['bw'], rough_box['bh']
 
-        # 建立 80% 純淨區 (上下左右各往內縮 10%，避開邊緣特效)
-        sx, sy = int(bx + bw * 0.10), int(by + bh * 0.10)
-        sw, sh = int(bw * 0.80), int(bh * 0.80)
+        # 建立 90% 純淨區 (上下左右各往內縮 5%，避開邊緣特效)
+        sx, sy = int(bx + bw * 0.05), int(by + bh * 0.05)
+        sw, sh = int(bw * 0.90), int(bh * 0.90)
 
         # 💡 [ Debug 視覺化 ]：在全域 Debug 圖上框出粗略大框與 ROI 隔離區
         cv2.rectangle(self.img_debug, (bx, by), (bx + bw, by + bh), (255, 0, 0), 2)
@@ -202,9 +203,9 @@ class VisionEngine:
 
         # 進行透視變換
         approx = np.array([[[min_x, min_y]], [[min_x, max_y]], [[max_x, max_y]], [[max_x, min_y]]], dtype=np.int32)
-        pts1 = self.order_points(approx.reshape(4, 2))
-        orig_unit = np.linalg.norm(pts1[0] - pts1[1]) / 8.0
-        M = cv2.getPerspectiveTransform(pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
+        self.pts1 = self.order_points(approx.reshape(4, 2))
+        orig_unit = np.linalg.norm(self.pts1[0] - self.pts1[1]) / 8.0
+        M = cv2.getPerspectiveTransform(self.pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
 
         # ==========================================
@@ -213,7 +214,7 @@ class VisionEngine:
         for r in range(8):
             for c in range(8):
                 # 取得格子採樣中心點範圍的四個頂點坐標 (縮小範圍避免吸到棋盤格線)
-                poly_pts = self.get_cell_poly_sampling(pts1, r, c, 0.08, 0.92).astype(np.int32)
+                poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.08, 0.92).astype(np.int32)
                 
                 # 直接算出能完全包覆這個多邊形採樣點的最小矩形範圍 (Bounding Box)
                 gx, gy, gw, gh = cv2.boundingRect(poly_pts)
@@ -228,8 +229,8 @@ class VisionEngine:
                 # 直覺計算：白色像素佔整格區域的比例
                 white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 0
                 
-                # 門檻值設定：白色大於 3% 判定為有棋子
-                is_p = white_ratio > 0.03
+                # 門檻值設定：白色大於 1% 判定為有棋子
+                is_p = white_ratio > 0.01
                 self.grid_state[r][c] = 1 if is_p else 0
                 
                 # 繪製 Debug 框線與實心填充
@@ -240,7 +241,7 @@ class VisionEngine:
         # 4. 全域採樣待放區 (避開廣告)
         # ==========================================
         img_h = self.img_orig.shape[0]
-        bottom_y = int(max(pts1[:, 1]))
+        bottom_y = int(max(self.pts1[:, 1]))
         ay_s, ay_e = bottom_y + 40, int(img_h * 0.82)
         if ay_s >= ay_e: return True 
         
@@ -282,7 +283,7 @@ class VisionEngine:
             parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, p_unit, x, ay, global_bg_color, global_bg_h)
             self.detected_pieces.append(parsed_grid)
 
-        cv2.polylines(self.img_debug, [pts1.astype(int)], True, (0, 255, 0), 3)
+        cv2.polylines(self.img_debug, [self.pts1.astype(int)], True, (0, 255, 0), 3)
         return True
 
     # ===================================================
@@ -417,9 +418,6 @@ class VisionEngine:
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
 
-# =================================================================
-# 🚀 【終極精準版】：全域搜尋「放完消除完後，內部空洞暴露面最小」的解題引擎
-# =================================================================
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
         """ 
