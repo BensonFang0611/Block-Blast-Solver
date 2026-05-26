@@ -136,7 +136,7 @@ def show_thanks_dialog(msg):
 st.set_page_config(page_title="Block Blast Solver", layout="centered")
 st.title("🧩 Block Blast Solver ")
 
-file = st.file_uploader("📸 上傳截圖", type=['png','jpg','jpeg','heic'], key="uploader")
+file = st.file_uploader("📸 上傳截圖(5/26)", type=['png','jpg','jpeg','heic'], key="uploader")
 
 if file is None:
     for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file", "current_error_msg"]:
