@@ -89,6 +89,34 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         st.error(f"Sheet Error: {e}")
         return False
 
+# --- 🛠️ 輔助功能 5：快取核心辨識與解法（解決切換步驟很卡的問題） ---
+@st.cache_data(show_spinner=False)
+def get_cached_solution(file_bytes):
+    # 將 bytes 轉回 OpenCV 圖片
+    nparr = np.frombuffer(file_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # 執行影像縮放限制
+    h, w = img.shape[:2]
+    MAX_WIDTH = 1080
+    if w > MAX_WIDTH:
+        scale = MAX_WIDTH / w
+        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        
+    # 執行 VisionEngine
+    eng = VisionEngine(img)
+    is_processed = eng.process()
+    
+    if not is_processed:
+        return False, None, None, None
+        
+    # 執行 LogicSolver 算答案
+    solver = LogicSolver()
+    sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
+    
+    # 將前端需要顯示的資料打包回傳
+    return True, sol, eng.warp_orig, eng.detected_pieces
+
 # --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
@@ -168,33 +196,37 @@ if file:
         new_h = int(h * scale)
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 初始化辨識引擎
-    eng = VisionEngine(cv_img)
+    # 💡 改用快取機制讀取答案
+    file.seek(0)  # 重設檔案指針
+    file_bytes = file.read()
 
-    # ─── 🛡️ 安全保底隔離霜 ───
     is_processed = False
+    sol, eng_warp_orig, eng_detected_pieces = None, None, None
+
     try:
-        is_processed = eng.process()
+        # 呼叫快取函數 (內部已包含影像降畫質、VisionEngine 與 LogicSolver 窮舉)
+        is_processed, sol, eng_warp_orig, eng_detected_pieces = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"IndexError 或核心引擎崩潰: {type(e).__name__}"
-        is_processed = False 
+        is_processed = False
 
     if is_processed:
         st.header("💡 解法建議")
-        solver = LogicSolver()
-        sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
         
         if sol:
-            step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol)+1)], horizontal=True)
+            step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol) + 1)], horizontal=True)
             idx = int(step_label.split(' ')[1])
             
             # --- 繪製解法示意圖 ---
-            canvas = eng.warp_orig.copy()
+            # 🎯 注意：這裡要改成快取傳回來的變數名稱（有底線的）
+            canvas = eng_warp_orig.copy()
             u = 400 / 8
             
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p, color = eng.detected_pieces[p_idx], STEP_COLORS[s % 3]
+                # 🎯 注意：這裡也要改成 eng_detected_pieces
+                p = eng_detected_pieces[p_idx]
+                color = STEP_COLORS[s % 3]
                 
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
