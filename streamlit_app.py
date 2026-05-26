@@ -115,8 +115,7 @@ def get_cached_solution(file_bytes):
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
     
     # 將前端需要顯示的資料打包回傳
-    return True, sol, eng.warp_orig, eng.detected_pieces
-
+    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug
 # --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
@@ -205,7 +204,7 @@ if file:
 
     try:
         # 呼叫快取函數 (內部已包含影像降畫質、VisionEngine 與 LogicSolver 窮舉)
-        is_processed, sol, eng_warp_orig, eng_detected_pieces = get_cached_solution(file_bytes)
+        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"IndexError 或核心引擎崩潰: {type(e).__name__}"
         is_processed = False
@@ -251,7 +250,7 @@ if file:
             st.warning("此盤面無解:..)")
             
         st.markdown("---")
-        combined_piece_img = get_combined_pieces_image(eng.detected_pieces)
+        combined_piece_img = get_combined_pieces_image(eng_detected_pieces)
         if combined_piece_img is not None:
             st.image(combined_piece_img, caption="偵測到的待放方塊", channels="BGR", use_container_width=True)
             
@@ -306,8 +305,8 @@ if file:
                 cv2.imwrite(orig_path, cv_img)
                 
                 # 檢查是否有產出 debug 圖片
-                has_debug = 'eng' in locals() and hasattr(eng, 'img_debug') and eng.img_debug is not None
-                cv2.imwrite(debug_path, eng.img_debug if has_debug else cv_img)
+                has_debug = 'eng_img_debug' in locals() and eng_img_debug is not None
+                cv2.imwrite(debug_path, eng_img_debug if has_debug else cv_img)
                 
                 # 上傳雙圖至 ImgBB
                 url_orig = upload_to_imgbb(orig_path)
