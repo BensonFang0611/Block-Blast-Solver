@@ -408,10 +408,12 @@ class VisionEngine:
             if has_pieces:
                 if grid in self.legal_grids:
                     final_grid = grid
+                    print(f"方塊({ox},{oy}) 成功使用背景相對比較法 [{channel}] 通道通關！")
                     break
         
         if final_grid is None:
             final_grid = grid
+            print(f"⚠️ 方塊({ox},{oy}) 背景相對比較未完全命中合法角度，啟動安全保底。")
 
         # ==========================================
         # 視覺化邊框繪製（完美對齊校正後的精準左上角）
@@ -461,10 +463,18 @@ class LogicSolver:
         
         # 轉成標準的 0-1 矩陣，避免外部分析時物件型態污染
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
-            
+        
+        print("\n🤖 [AI 評估日誌]：開始全域窮舉所有排列組合...")
+        
         # 啟動深度優先搜尋
         self._solve_dfs(clean_grid, pieces, p_indices, [])
-
+        
+        print(f"📊 [AI 評估結束]：全域共掃描到 {self.total_scanned_solutions} 組可行解。")
+        if self.global_best_path is not None:
+            print(f"🏆 最終篩選出的全域「最小內部周長」分數為: {self.global_min_perimeter}")
+        else:
+            print("❌ 警告：全域搜尋完畢，找不到任何一組可以完全放下三個方塊的解。")
+            
         return self.global_best_path
 
     def _solve_dfs(self, grid, pieces, p_indices, current_path):
