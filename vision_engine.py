@@ -209,33 +209,59 @@ class VisionEngine:
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
 
         # ==========================================
-        # 3. 💡【超簡化改法】：直接拿原本的二值化圖與算出的坐標算白色 % 數
+        # 3. 💡【新邏輯】：雙輪式 8x8 棋盤辨識（最小 % 數找底色 + 中心明度差值）
         # ==========================================
+        # ─── 第一輪：計算 64 格的白色像素占比，找出「最純淨的空位」作為底色基準 ───
+        cell_white_ratios = [] # 儲存 (r, c, white_ratio, bounding_box)
+        
         for r in range(8):
             for c in range(8):
-                # 取得格子採樣中心點範圍的四個頂點坐標 (縮小範圍避免吸到棋盤格線)
+                # 取得格子採樣中心點範圍的四個頂點座標
                 poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.08, 0.92).astype(np.int32)
-                
-                # 直接算出能完全包覆這個多邊形採樣點的最小矩形範圍 (Bounding Box)
                 gx, gy, gw, gh = cv2.boundingRect(poly_pts)
                 
-                # 確保切片範圍不超出圖片邊界
                 gy_s, gy_e = max(0, gy), min(thresh_g.shape[0], gy + gh)
                 gx_s, gx_e = max(0, gx), min(thresh_g.shape[1], gx + gw)
                 
-                # 直接在原本的二值化全圖 (thresh_g) 上切片取出這一小塊
                 patch_thresh = thresh_g[gy_s:gy_e, gx_s:gx_e]
+                white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 1.0
                 
-                # 直覺計算：白色像素佔整格區域的比例
-                white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 0
+                cell_white_ratios.append((r, c, white_ratio, (gx_s, gy_s, gx_e, gy_e), poly_pts))
+        
+        # 🎯 找出白色像素占比最小（最黑、最空）的那一格
+        best_empty_cell = min(cell_white_ratios, key=lambda x: x[2])
+        eb_x_s, eb_y_s, eb_x_e, eb_y_e = best_empty_cell[3]
+        
+        # 採樣該空位格在 V 通道（明度）的中位數，作為「全域棋盤底色基準」
+        board_bg_v = np.median(v_channel[eb_y_s:eb_y_e, eb_x_s:eb_x_e])
+        
+        # ─── 第二輪：利用底色明度基準，透過中心點插值決定 64 格的生死 ───
+        for r, c, _, (gx_s, gy_s, gx_e, gy_e), poly_pts in cell_white_ratios:
+            # 🎯 鎖定每一格的核心中心點範圍 (取 35% ~ 65% 核心區)，避開棋盤縫隙與網格線
+            cw = gx_e - gx_s
+            ch = gy_e - gy_s
+            cx_s, cx_e = gx_s + int(0.35 * cw), gx_s + int(0.65 * cw)
+            cy_s, cy_e = gy_s + int(0.35 * ch), gy_s + int(0.65 * ch)
+            
+            # 提取該格中心點的明度
+            cell_center_patch = v_channel[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+            
+            if cell_center_patch.size > 0:
+                cell_v_median = np.median(cell_center_patch)
+                # 💡 明度插值判定：如果該格中心明度和「純淨空位底色」明度差大於 15，代表有方塊疊在上面
+                is_p = abs(int(cell_v_median) - int(board_bg_v)) > 15
+            else:
+                is_p = False
                 
-                # 門檻值設定：白色大於 1% 判定為有棋子
-                is_p = white_ratio > 0.01
-                self.grid_state[r][c] = 1 if is_p else 0
-                
-                # 繪製 Debug 框線與實心填充
-                border_color = (0,255,0) if is_p else (120,120,120)
-                cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
+            self.grid_state[r][c] = 1 if is_p else 0
+            
+            # 繪製 Debug 框線與實心填充
+            border_color = (0, 255, 0) if is_p else (120, 120, 120)
+            cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
+            
+            # 在最空的基準底色格子畫一個藍色小點標記它（Debug 觀察用）
+            if r == best_empty_cell[0] and c == best_empty_cell[1]:
+                cv2.circle(self.img_debug, (int((gx_s+gx_e)/2), int((gy_s+gy_e)/2)), 5, (255, 0, 0), -1)
 
         # ==========================================
         # 4. 全域採樣待放區 (避開廣告)
