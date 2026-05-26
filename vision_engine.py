@@ -208,7 +208,7 @@ class VisionEngine:
         self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
 
         # ==========================================
-        # 3. 💡【新邏輯】：只修改 8x8 格子判定（最小 % 數找底色 + 中心明度插值）
+        # 3. 8x8 格子判定
         # ==========================================
         self.grid_state = [[0]*8 for _ in range(8)]
         cell_samples = [] 
@@ -217,7 +217,7 @@ class VisionEngine:
         for r in range(8):
             for c in range(8):
                 # 沿用你原本獲取網格與 bounding box 的採樣方式
-                poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.08, 0.92).astype(np.int32)
+                poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.1, 0.9).astype(np.int32)
                 gx, gy, gw, gh = cv2.boundingRect(poly_pts)
                 
                 gy_s, gy_e = max(0, gy), min(thresh_g.shape[0], gy + gh)
@@ -575,7 +575,7 @@ if __name__ == "__main__":
     # ==========================================
     # 1. 設定你的測試圖片路徑
     # ==========================================
-    IMAGE_PATH = "13.jpg"  # <-- 請修改為你的圖片路徑
+    IMAGE_PATH = "1.jpg"  # <-- 請修改為你的圖片路徑
     print(f"正在讀取圖片: {IMAGE_PATH} ...")
     img = cv2.imread(IMAGE_PATH)
     
