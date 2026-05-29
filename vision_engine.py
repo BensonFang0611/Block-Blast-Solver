@@ -237,7 +237,7 @@ class VisionEngine:
             
             cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
         # ==========================================
-        # 待放區採樣與背景分析
+        # 待放區ROI
         # ==========================================
         img_h = self.img_orig.shape[0]
         board_h = max_y - min_y
@@ -287,7 +287,7 @@ class VisionEngine:
     # ===================================================
     def parse_piece_multi_channel(self, mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, unit, ox, oy, bg_color, bg_h):
         diff_map = np.linalg.norm(bgr_roi.astype(np.float32) - bg_color.astype(np.float32), axis=2).astype(np.uint8)
-        _, pure_piece_mask = cv2.threshold(diff_map, 20, 255, cv2.THRESH_BINARY)
+        _, pure_piece_mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
         nz = cv2.findNonZero(pure_piece_mask)
         if nz is None:
             nz = cv2.findNonZero(mask_roi)
@@ -337,7 +337,6 @@ class VisionEngine:
                         grid[r][c] = 1
                         has_pieces = True
 
-            # 檢查當前門檻下算出的網格形狀是否合法
             if has_pieces and (grid in self.legal_grids):
                 final_grid = grid
                 break
@@ -346,7 +345,7 @@ class VisionEngine:
             final_grid = grid
 
         # ==========================================
-        # 視覺化邊框繪製（保持原樣）
+        # 視覺化邊框繪製
         # ==========================================
         for r in range(len(final_grid)):
             for c in range(len(final_grid[0])):
