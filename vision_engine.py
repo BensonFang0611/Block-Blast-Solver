@@ -18,14 +18,14 @@ SHEET_NAME = "Sheet1"
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤（修改：改為完全透明背景） ---
-def convert_bgr_to_base64_html(img_bgr):
+# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤（修改：支援傳入動態背景色） ---
+def convert_bgr_to_base64_html(img_bgr, bg_rgb_str):
     try:
         _, buffer = cv2.imencode('.png', img_bgr)
         b64_str = base64.b64encode(buffer).decode()
-        # 🎯 將 background-color 設為 transparent，讓 ROI 截圖與 Streamlit 網頁背景完美融合
+        # 🎯 將背景色設為視覺引擎抓到的 bg_rgb_str，達成完美無縫融合
         return f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: transparent;">
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_rgb_str}; border-radius: 8px;">
             <img src="data:image/png;base64,{b64_str}" style="max-width: 100%; max-height: 100%; object-fit: scale-down;" />
         </div>
         """
@@ -66,7 +66,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 🛠️ 輔助功能 4：快取核心辨識與解法 ---
+# --- 🛠️ 輔助功能 4：快取核心辨識與解法（修改：多回傳一個 bg_color） ---
 @st.cache_data(show_spinner=False)
 def get_cached_solution(file_bytes):
     nparr = np.frombuffer(file_bytes, np.uint8)
@@ -81,11 +81,15 @@ def get_cached_solution(file_bytes):
     eng = VisionEngine(img)
     is_processed = eng.process()
     if not is_processed:
-        return False, None, None, None, None
+        return False, None, None, None, None, None
         
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug
+    
+    # 🎯 額外撈出引擎在大約第 251 行算出的 global_bg_color，如果沒抓到就給預設深色
+    bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
+    
+    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color
 
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
@@ -156,10 +160,11 @@ if file:
     file.seek(0)  
     file_bytes = file.read()
     is_processed = False
-    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = None, None, None, None
+    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = None, None, None, None, None
 
     try:
-        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = get_cached_solution(file_bytes)
+        # 🎯 接收回傳的動態背景色
+        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
@@ -202,7 +207,13 @@ if file:
         st.markdown("---")
         st.write("**🔍 實際偵測到的待放方塊 ROI 畫面**")
 
-        # 🎯 建立三等份槽位，不縮放圖片且各自置中
+        # 🎯 核心改動點：將視覺引擎抓到的 BGR 顏色轉為前端網頁的 rgb(R,G,B) 字串
+        if eng_bg_color is not None:
+            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
+            bg_css_color = f"rgb({r}, {g}, {b})"
+        else:
+            bg_css_color = "rgb(20, 20, 20)"
+
         if eng_detected_pieces:
             try:
                 rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
@@ -211,12 +222,13 @@ if file:
                 for i in range(3):
                     with p_cols[i]:
                         if i < len(rois):
-                            html_code = convert_bgr_to_base64_html(rois[i])
+                            # 將轉出的網頁顏色傳入 function
+                            html_code = convert_bgr_to_base64_html(rois[i], bg_css_color)
                             st.markdown(html_code, unsafe_allow_html=True)
                         else:
-                            # 🎯 留空槽位也改為透明背景，僅保留更淡的虛線，讓視覺感更乾淨
-                            st.markdown("""
-                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: transparent; border: 1px dashed rgba(0,0,0,0.08); border-radius: 5px; color: gray; font-size: 0.8em;">
+                            # 留空槽位也同步使用該背景色，僅用一條極淡的白虛線標出結構
+                            st.markdown(f"""
+                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_color}; border: 1px dashed rgba(255,255,255,0.15); border-radius: 8px; color: rgba(255,255,255,0.4); font-size: 0.8em;">
                                 空槽位
                             </div>
                             """, unsafe_allow_html=True)
