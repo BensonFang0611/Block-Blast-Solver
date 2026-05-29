@@ -215,15 +215,15 @@ class VisionEngine:
         piece_area_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
         piece_area_mask = piece_area_thresh[ay_s:ay_e, :]
         
-        # 🎯 還原點：恢復為原本的區域變數
-        piece_area_color = self.img_orig[ay_s:ay_e, :]
+        # 🎯 綁定到實例屬性，供前端直接讀取一整張完整大原圖
+        self.piece_area_color = self.img_orig[ay_s:ay_e, :]
         by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
         piece_area_color_bg = self.img_orig[by_s:by_e, :]
         bg_pixels = piece_area_color_bg.reshape(-1, 3)
         
-        # 🎯 還原點：移除多餘的 self.self... 修正為傳統的區域變數 global_bg_color
-        global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
-        bg_hsv = cv2.cvtColor(np.uint8([[global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        # 🎯 移除多餘的 self.self... 修正為乾淨的實例屬性 self.global_bg_color
+        self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
+        bg_hsv = cv2.cvtColor(np.uint8([[self.global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
         global_bg_h = bg_hsv[0]
 
         # ==========================================
@@ -244,8 +244,10 @@ class VisionEngine:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
             
-            # 🎯 還原點：恢復原本的單純列表（儲存 0 與 1 的二維 Grid 陣列）
-            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
+            # 🎯 配合正確的屬性名稱傳入背景色
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, self.global_bg_color)
+            
+            # 完美恢復原本的二維 Grid (0 與 1 矩陣) 放入 detected_pieces
             self.detected_pieces.append(parsed_grid)
         return True
 
@@ -323,6 +325,7 @@ class VisionEngine:
         diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
         return rect
 
+
 class LogicSolver:
     def solve(self, grid, pieces, p_indices, path=None):
         self.global_best_path = None
@@ -330,7 +333,7 @@ class LogicSolver:
         self.total_scanned_solutions = 0
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
         
-        # 🎯 還原點：pieces 已經回到原本單純的 grid 列表，直接指派即可
+        # 完美回到最純粹的原生串列
         self._solve_dfs(clean_grid, pieces, p_indices, [])
         return self.global_best_path
 
@@ -342,7 +345,7 @@ class LogicSolver:
                 self.global_min_perimeter = score
                 self.global_best_path = list(current_path)
             return
-        for i p_indices:
+        for i in p_indices:
             p = pieces[i]
             p_rows = len(p)
             p_cols = len(p[0])
