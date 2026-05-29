@@ -54,8 +54,8 @@ class VisionEngine:
         # 影像預處理
         # ==========================================
         hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
-        h_channel , s_channel, v_channel = cv2.split(hsv)
-        blur = cv2.GaussianBlur(v_channel, (5, 5), 0)
+        _ , _, v_channel = cv2.split(hsv)
+        blur = cv2.GaussianBlur(v_channel, (11, 11), 0)
         thresh_v = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
         thresh_g = cv2.morphologyEx(thresh_v, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
