@@ -283,12 +283,11 @@ class VisionEngine:
         return True
 
     # ===================================================
-    # 智慧辨識核心：重新排列四通道相對對比權重
+    # 辨識待放物
     # ===================================================
     def parse_piece_multi_channel(self, mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, unit, ox, oy, bg_color, bg_h):
         diff_map = np.linalg.norm(bgr_roi.astype(np.float32) - bg_color.astype(np.float32), axis=2).astype(np.uint8)
-        _, pure_piece_mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
-        
+        _, pure_piece_mask = cv2.threshold(diff_map, 20, 255, cv2.THRESH_BINARY)
         nz = cv2.findNonZero(pure_piece_mask)
         if nz is None:
             nz = cv2.findNonZero(mask_roi)
@@ -299,14 +298,14 @@ class VisionEngine:
         cols = max(1, min(5, int(round(mw / unit))))
         rows = max(1, min(5, int(round(mh / unit))))
         cols, rows = max(1, min(5, cols)), max(1, min(5, rows))
-        bg_hsv = cv2.cvtColor(np.uint8([[bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
-        bg_s_base = bg_hsv[1]
-        bg_v_std_base = 2.0 
 
-        channels_to_try = ['v_std_diff', 'bgr_color', 's_diff', 'h_diff']
         final_grid = None
         
-        for channel in channels_to_try:
+        start_thresh = 30
+        end_thresh = 2
+        step = 2
+        
+        for current_thresh in range(start_thresh, end_thresh - 1, -step):
             grid = [[0]*cols for _ in range(rows)]
             has_pieces = False
 
@@ -326,46 +325,28 @@ class VisionEngine:
                     cx_s, cx_e = max(0, cx_s), min(bgr_roi.shape[1], cx_e)
                     cy_s, cy_e = max(0, cy_s), min(bgr_roi.shape[0], cy_e)
                     
-                    if channel == 'v_std_diff':
-                        patch = v_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
-                        cell_v_std = np.std(patch) if patch.size > 0 else 0
-                        is_p = (cell_v_std - bg_v_std_base) > 3.5
-                        
-                    elif channel == 'bgr_color':
-                        patch = bgr_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
-                        is_p = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color) > 40 if patch.size > 0 else False
-                        
-                    elif channel == 's_diff':
-                        patch = s_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
-                        if patch.size > 0:
-                            cell_s_median = np.median(patch)
-                            is_p = abs(int(cell_s_median) - int(bg_s_base)) > 15
-                        else: 
-                            is_p = False
-                        
-                    elif channel == 'h_diff':
-                        patch = h_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
-                        if patch.size > 0:
-                            h_median = np.median(patch)
-                            h_diff_val = min(abs(int(h_median) - int(bg_h)), 180 - abs(int(h_median) - int(bg_h)))
-                            is_p = h_diff_val > 8
-                        else: 
-                            is_p = False
+                    patch = bgr_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                    
+                    if patch.size > 0:
+                        color_dist = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color)
+                        is_p = color_dist > current_thresh
+                    else:
+                        is_p = False
                     
                     if is_p:
                         grid[r][c] = 1
                         has_pieces = True
 
-            if has_pieces:
-                if grid in self.legal_grids:
-                    final_grid = grid
-                    break
-        
+            # 檢查當前門檻下算出的網格形狀是否合法
+            if has_pieces and (grid in self.legal_grids):
+                final_grid = grid
+                break
+
         if final_grid is None:
             final_grid = grid
 
         # ==========================================
-        # 視覺化邊框繪製
+        # 視覺化邊框繪製（保持原樣）
         # ==========================================
         for r in range(len(final_grid)):
             for c in range(len(final_grid[0])):
