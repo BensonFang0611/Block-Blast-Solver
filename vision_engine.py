@@ -302,7 +302,7 @@ class VisionEngine:
         final_grid = None
         
         start_thresh = 30
-        end_thresh = 2
+        end_thresh = 6
         step = 2
         
         for current_thresh in range(start_thresh, end_thresh - 1, -step):
