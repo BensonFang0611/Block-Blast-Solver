@@ -148,7 +148,6 @@ if file:
         is_processed = False
 
     if is_processed:
-        # 🎯 修正點：移除原本覆蓋全網頁背景色的 st.markdown CSS，讓它恢復預設的亮/暗黑模式底色。
         st.header("💡 解法建議")
         if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol) + 1)], horizontal=True)
@@ -159,7 +158,10 @@ if file:
             u = 400 / 8
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p = eng_detected_pieces[p_idx]["grid"]
+                
+                # 🎯 核心修正點：將本來的 eng_detected_pieces[p_idx]["grid"] 改回純陣列指向
+                p = eng_detected_pieces[p_idx]
+                
                 color = STEP_COLORS[s % 3]
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
@@ -186,7 +188,6 @@ if file:
         st.markdown("---")
         st.write("**🔍 實際偵測到的待放方塊原圖**")
 
-        # 🎯 完美保留：直接用 piece_area_color 原始畫面貼上，獨立與背景並存
         if eng_piece_area_img is not None:
             st.image(eng_piece_area_img, caption="遊戲下方待放區原始畫面", channels="BGR", use_container_width=True)
         else:
@@ -220,7 +221,7 @@ with st.form("feedback_form"):
     if st.form_submit_button("🚀 送出"):
         with st.spinner("同步中..."):
             final_type = feedback_Type
-            final_detail = other_detail if "開他" in feedback_Type else "未填寫補充說明"
+            final_detail = other_detail if "其他" in feedback_Type else "未填寫補充說明"
             if not "其他" in feedback_Type and other_detail:
                 final_detail = other_detail
                 
