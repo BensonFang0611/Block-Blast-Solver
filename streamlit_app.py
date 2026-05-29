@@ -72,28 +72,23 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
 # --- 🛠️ 輔助功能 4：快取核心辨識與解法 ---
 @st.cache_data(show_spinner=False)
 def get_cached_solution(file_bytes):
-    # 將 bytes 轉回 OpenCV 圖片
     nparr = np.frombuffer(file_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # 執行影像縮放限制
     h, w = img.shape[:2]
     MAX_WIDTH = 1080
     if w > MAX_WIDTH:
         scale = MAX_WIDTH / w
         img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         
-    # 執行 VisionEngine
     eng = VisionEngine(img)
     is_processed = eng.process()
     if not is_processed:
         return False, None, None, None, None
         
-    # 執行 LogicSolver 算答案
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
     
-    # 將前端需要顯示的資料打包回傳
     return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug
 
 # --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
@@ -147,16 +142,13 @@ if file:
             st.session_state.pop(key, None)
         st.session_state.last_file_id = current_file_id
 
-    # ✨ User Visit 簽到
     if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
         if log_to_sheets(err_type="User Visit", detail_info="None"):
             st.session_state.logged_file = current_file_id
 
-    # 讀取原始影像
     raw_pil_img = Image.open(file)
     cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
 
-    # --- 🎯 影像預處理：降低至固定畫質 ---
     h, w = cv_img.shape[:2]
     MAX_WIDTH = 1080
     if w > MAX_WIDTH:
@@ -165,7 +157,6 @@ if file:
         new_h = int(h * scale)
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 💡 快取機制讀取答案
     file.seek(0)  
     file_bytes = file.read()
     is_processed = False
@@ -174,7 +165,6 @@ if file:
     try:
         is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = get_cached_solution(file_bytes)
     except Exception as e:
-        # 🎯 強化：精準捕捉崩潰原因與詳細訊息，避免被蓋掉
         st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
 
@@ -189,7 +179,8 @@ if file:
             u = 400 / 8
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p = eng_detected_pieces[p_idx]
+                # 🎯 配合新的字典結構改讀取 ["grid"]
+                p = eng_detected_pieces[p_idx]["grid"]
                 color = STEP_COLORS[s % 3]
                 for pr in range(len(p)):
                     for pc in range(len(p[0])):
@@ -215,23 +206,17 @@ if file:
 
         st.markdown("---")
 
-        # 🎯 修改點：直接抓取視覺引擎內切出的實際 ROI 畫面並拼接顯示
+        # 🎯 修改點：從字典結構中撈出真正的 'roi_img' 進行拼接渲染！
         if eng_detected_pieces:
             try:
-                # 撈出物件中帶有原始影像裁切的屬性（兼容 roi_img 或 crop_img 命名）
-                rois = []
-                for p in eng_detected_pieces:
-                    if hasattr(p, 'roi_img') and p.roi_img is not None:
-                        rois.append(p.roi_img)
-                    elif hasattr(p, 'crop_img') and p.crop_img is not None:
-                        rois.append(p.crop_img)
+                rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
                 
                 if rois:
-                    # 確保所有 ROI 高度一致再進行水平拼接
+                    # 確保所有 ROI 高度一致
                     max_h = max(r.shape[0] for r in rois if len(r.shape) >= 2)
                     resized_rois = [cv2.resize(r, (int(r.shape[1] * max_h / r.shape[0]), max_h)) for r in rois]
                     
-                    # 加上一點微小的黑邊作間隔
+                    # 加上黑邊間隔
                     gap_w = 15
                     gap = np.zeros((max_h, gap_w, 3), dtype=np.uint8)
                     stack_list = []
@@ -243,13 +228,11 @@ if file:
                     roi_combined = np.hstack(stack_list)
                     st.image(roi_combined, caption="實際偵測到的待放方塊 ROI 畫面", channels="BGR", use_container_width=True)
                 else:
-                    # 如果物件上沒有任何圖片屬性，改為顯示系統辨識除錯圖
                     if eng_img_debug is not None:
-                        st.image(eng_img_debug, caption="系統辨識除錯圖（未擷取到單一 ROI）", channels="BGR", use_container_width=True)
+                        st.image(eng_img_debug, caption="系統辨識除錯圖", channels="BGR", use_container_width=True)
             except Exception as e:
                 st.error(f"無法顯示 ROI 畫面: {e}")
     else:
-        # ❌ 辨識失敗或引擎崩潰
         err_msg = st.session_state.get("current_error_msg", "無法定位棋盤")
         st.error(f"❌ 辨識失敗：{err_msg}")
         if "dialog_closed" not in st.session_state:
