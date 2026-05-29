@@ -274,7 +274,10 @@ class VisionEngine:
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
             
             parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
-            self.detected_pieces.append(parsed_grid)
+            
+            self.detected_pieces.append({
+                "grid": parsed_grid,
+                "roi_img": bgr_roi.copy()
 
     # ===================================================
     # 辨識待放物
