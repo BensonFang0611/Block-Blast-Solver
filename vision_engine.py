@@ -262,23 +262,23 @@ class VisionEngine:
         candidates_p = []
         for cnt in p_cnts:
             x, y, pw, ph = cv2.boundingRect(cnt)
-            if pw < (orig_unit * 0.5) and ph < (orig_unit * 0.5):continue
+            if pw < (orig_unit * 0.5) and ph < (orig_unit * 0.5): continue
             if pw > 6*orig_unit or ph > 6*orig_unit: continue
             candidates_p.append([x, y + ay_s, pw, ph, x + pw/2])
-
         final_pieces = sorted(candidates_p, key=lambda p: p[0])[:3]
         p_unit = orig_unit * self.piece_scale
-        self.detected_pieces = []
         
+        self.detected_pieces = []
         for x, ay, pw, ph, _ in final_pieces:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            
             parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
             
             self.detected_pieces.append({
                 "grid": parsed_grid,
                 "roi_img": bgr_roi.copy()
+            })
+        return True
 
     # ===================================================
     # 辨識待放物
