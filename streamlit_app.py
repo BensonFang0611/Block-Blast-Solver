@@ -99,7 +99,7 @@ def get_cached_solution(file_bytes):
 # --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
-    st.write(f"系統偵測到錯誤（{error_detail}），請問您是否回報此錯誤圖片？")
+    st.write(f"系統偵測到錯誤（`{error_detail}`），請問您是否回報此錯誤圖片？")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("回報錯誤", type="primary", use_container_width=True):
@@ -174,7 +174,8 @@ if file:
     try:
         is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = get_cached_solution(file_bytes)
     except Exception as e:
-        st.session_state.current_error_msg = f"IndexError 或核心引擎崩潰: {type(e).__name__}"
+        # 🎯 強化：精準捕捉崩潰原因與詳細訊息，避免被蓋掉
+        st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
 
     if is_processed:
@@ -217,12 +218,17 @@ if file:
         # 🎯 修改點：直接抓取視覺引擎內切出的實際 ROI 畫面並拼接顯示
         if eng_detected_pieces:
             try:
-                # 從偵測到的物件中撈出帶有原始影像裁切的屬性（假設名為 roi_img）
-                rois = [p.roi_img for p in eng_detected_pieces if hasattr(p, 'roi_img')]
+                # 撈出物件中帶有原始影像裁切的屬性（兼容 roi_img 或 crop_img 命名）
+                rois = []
+                for p in eng_detected_pieces:
+                    if hasattr(p, 'roi_img') and p.roi_img is not None:
+                        rois.append(p.roi_img)
+                    elif hasattr(p, 'crop_img') and p.crop_img is not None:
+                        rois.append(p.crop_img)
                 
                 if rois:
                     # 確保所有 ROI 高度一致再進行水平拼接
-                    max_h = max(r.shape[0] for r in rois)
+                    max_h = max(r.shape[0] for r in rois if len(r.shape) >= 2)
                     resized_rois = [cv2.resize(r, (int(r.shape[1] * max_h / r.shape[0]), max_h)) for r in rois]
                     
                     # 加上一點微小的黑邊作間隔
@@ -237,15 +243,15 @@ if file:
                     roi_combined = np.hstack(stack_list)
                     st.image(roi_combined, caption="實際偵測到的待放方塊 ROI 畫面", channels="BGR", use_container_width=True)
                 else:
-                    # 如果物件上沒有 roi_img 屬性，降級顯示包含下方區塊的除錯輔助畫面
-                    st.info("💡 提示：改為顯示系統辨識除錯圖")
+                    # 如果物件上沒有任何圖片屬性，改為顯示系統辨識除錯圖
                     if eng_img_debug is not None:
-                        st.image(eng_img_debug, caption="系統辨識除錯圖", channels="BGR", use_container_width=True)
+                        st.image(eng_img_debug, caption="系統辨識除錯圖（未擷取到單一 ROI）", channels="BGR", use_container_width=True)
             except Exception as e:
                 st.error(f"無法顯示 ROI 畫面: {e}")
     else:
-        # ❌ 辨識失敗
-        st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
+        # ❌ 辨識失敗或引擎崩潰
+        err_msg = st.session_state.get("current_error_msg", "無法定位棋盤")
+        st.error(f"❌ 辨識失敗：{err_msg}")
         if "dialog_closed" not in st.session_state:
             st.session_state.show_dialog = True
 
