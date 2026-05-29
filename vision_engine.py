@@ -272,20 +272,14 @@ class VisionEngine:
         for x, ay, pw, ph, _ in final_pieces:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            h_roi = h_channel[ay:ay+ph, x:x+pw]
-            s_roi = s_channel[ay:ay+ph, x:x+pw]
-            v_roi = v_channel[ay:ay+ph, x:x+pw]
             
-            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, p_unit, x, ay, global_bg_color, global_bg_h)
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
             self.detected_pieces.append(parsed_grid)
-
-        cv2.polylines(self.img_debug, [self.pts1.astype(int)], True, (0, 255, 0), 3)
-        return True
 
     # ===================================================
     # 辨識待放物
     # ===================================================
-    def parse_piece_multi_channel(self, mask_roi, bgr_roi, h_roi, s_roi, v_roi, pw, ph, unit, ox, oy, bg_color, bg_h):
+    def parse_piece_multi_channel(self, mask_roi, bgr_roi, unit, ox, oy, bg_color):
         diff_map = np.linalg.norm(bgr_roi.astype(np.float32) - bg_color.astype(np.float32), axis=2).astype(np.uint8)
         _, pure_piece_mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
         nz = cv2.findNonZero(pure_piece_mask)
