@@ -247,13 +247,39 @@ if file:
                     
             st.image(canvas, channels="BGR", use_container_width=True)
         else:
-            st.warning("此盤面無解:..)")
+    st.warning("此盤面無解:..)")
+st.markdown("---")
+
+# 🎯 修改：直接抓取視覺引擎內切出的實際 ROI 畫面
+# 備註：請根據你的 vision_engine.py 實際變數名稱調整（例如 eng_pieces_rois）
+# 這裡假設 get_cached_solution 也有把原始的 rois 傳回來，或者 eng 內有保留
+if 'eng_img_debug' in locals():
+    # 如果你的核心引擎有存下各個待放方塊的 ROI list，可以直接用 hstack 拼接
+    # 範例：假設變數叫 eng.pieces_rois
+    try:
+        # 這裡需要確認你的 vision_engine 傳回來的物件或內部屬性
+        # 如果 get_cached_solution 有傳出包含 ROI 的物件，可以直接拼接它
+        from vision_engine import VisionEngine
+        
+        # 假設我們從偵測到的方塊去回推，或者你的 eng 物件有保留原始裁切 list
+        # 這裡示範直接水平拼接多張 ROI 圖片：
+        rois = [p.roi_img for p in eng_detected_pieces if hasattr(p, 'roi_img')]
+        
+        if rois:
+            # 確保所有 ROI 高度一致再進行拼接（或是直接用 st.columns 分開顯示）
+            max_h = max(r.shape[0] for r in rois)
+            resized_rois = [cv2.resize(r, (int(r.shape[1] * max_h / r.shape[0]), max_h)) for r in rois]
+            roi_combined = np.hstack(resized_rois)
             
-        st.markdown("---")
-        combined_piece_img = get_combined_pieces_image(eng_detected_pieces)
-        if combined_piece_img is not None:
-            st.image(combined_piece_img, caption="偵測到的待放方塊", channels="BGR", use_container_width=True)
-            
+            st.image(roi_combined, caption="實際偵測到的待放方塊 ROI 畫面", channels="BGR", use_container_width=True)
+        else:
+            # 如果無法從物件取得，改用 st.columns 呈現 debug 畫面中下方的區域
+            st.info("無法取得單一 ROI，改為顯示除錯輔助畫面的待放區")
+            if eng_img_debug is not None:
+                st.image(eng_img_debug, caption="系統辨識除錯圖", channels="BGR", use_container_width=True)
+    except Exception as e:
+        st.error(f"無法顯示 ROI 畫面: {e}")
+        
     else:
         # ❌ 辨識失敗
         st.error("❌ 無法精確定位棋盤，請確認截圖是否有完整邊框。")
