@@ -18,20 +18,6 @@ SHEET_NAME = "Sheet1"
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤（修改：注入動態遊戲背景色） ---
-def convert_bgr_to_base64_html(img_bgr, bg_css_str):
-    try:
-        _, buffer = cv2.imencode('.png', img_bgr)
-        b64_str = base64.b64encode(buffer).decode()
-        # 利用 flexbox 讓原始大小的圖片在不縮放的情況下完美置中，並套用動態背景色
-        return f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_str}; border-radius: 8px;">
-            <img src="data:image/png;base64,{b64_str}" style="max-width: 100%; max-height: 100%; object-fit: scale-down;" />
-        </div>
-        """
-    except:
-        return ""
-
 # --- 🛠️ 輔助功能 2：圖片上傳 ImgBB ---
 def upload_to_imgbb(file_path):
     try:
@@ -60,7 +46,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 🛠️ 輔助功能 4：快取核心辨識與解法 ---
+# --- 🛠️ 輔助功能 4：快取核心辨識與解法 (修改：額外帶出 piece_area_color) ---
 @st.cache_data(show_spinner=False)
 def get_cached_solution(file_bytes):
     nparr = np.frombuffer(file_bytes, np.uint8)
@@ -74,14 +60,16 @@ def get_cached_solution(file_bytes):
     eng = VisionEngine(img)
     is_processed = eng.process()
     if not is_processed:
-        return False, None, None, None, None, None  # 多留一個欄位給背景色
+        return False, None, None, None, None, None, None
         
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
     
-    # 🎯 關鍵改動：從執行完的 eng 實例中抓取正確命名的屬性
     bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
-    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color
+    # 🎯 把一整條原始的待放區圖片也 return 出去
+    piece_area_img = getattr(eng, 'piece_area_color', None)
+    
+    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color, piece_area_img
 
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
@@ -152,16 +140,34 @@ if file:
     file.seek(0)
     file_bytes = file.read()
     is_processed = False
-    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = None, None, None, None, None
+    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color, eng_piece_area_img = None, None, None, None, None, None
 
     try:
-        # 🎯 修正點：用 6 個變數去接 get_cached_solution 回傳的值，解決 ValueError 崩潰
-        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = get_cached_solution(file_bytes)
+        # 🎯 接收 7 個解題後的變數
+        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color, eng_piece_area_img = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
 
     if is_processed:
+        # 🎯 核心改動點：動態將背景色轉換成全網頁網頁底色 CSS
+        if eng_bg_color is not None:
+            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
+            bg_css_color = f"rgb({r}, {g}, {b})"
+            
+            # 強制讓整個網頁（主容器與文字色彩平衡）改為遊戲當前顏色
+            st.markdown(f"""
+                <style>
+                .stApp {{
+                    background-color: {bg_css_color} !important;
+                }}
+                /* 確保輸入框或特定元件的對比文字顏色清晰 */
+                h1, h2, h3, p, span, label {{
+                    color: #ffffff !important;
+                }}
+                </style>
+            """, unsafe_allow_html=True)
+
         st.header("💡 解法建議")
         if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol) + 1)], horizontal=True)
@@ -197,36 +203,14 @@ if file:
             st.warning("此盤面無解:..)")
 
         st.markdown("---")
-        st.write("**🔍 實際偵測到的待放方塊 ROI 畫面**")
+        st.write("**🔍 實際偵測到的待放方塊原圖**")
 
-        # 🎯 核心改動點：將動態背景色從 BGR 轉換為網頁 CSS 的 rgb() 格式
-        if eng_bg_color is not None:
-            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
-            bg_css_color = f"rgb({r}, {g}, {b})"
+        # 🎯 核心改動點：直接使用 piece_area_color 原圖顯示待放物區塊，乾淨俐落！
+        if eng_piece_area_img is not None:
+            st.image(eng_piece_area_img, caption="遊戲下方待放區原始畫面", channels="BGR", use_container_width=True)
         else:
-            bg_css_color = "rgb(20, 20, 20)"
-
-        if eng_detected_pieces:
-            try:
-                rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
-                
-                # 建立三等份槽位
-                p_cols = st.columns(3)
-                for i in range(3):
-                    with p_cols[i]:
-                        if i < len(rois):
-                            # 將轉出的動態背景色注入
-                            html_code = convert_bgr_to_base64_html(rois[i], bg_css_color)
-                            st.markdown(html_code, unsafe_allow_html=True)
-                        else:
-                            # 空槽位也套用該背景色，配上極淡的虛線
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_color}; border: 1px dashed rgba(255,255,255,0.15); border-radius: 8px; color: rgba(255,255,255,0.4); font-size: 0.8em;">
-                                空槽位
-                            </div>
-                            """, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"無法顯示 ROI 畫面: {e}")
+            st.info("無法讀取待放區原圖畫面")
+            
     else:
         err_msg = st.session_state.get("current_error_msg", "無法定位棋盤")
         st.error(f"❌ 辨識失敗：{err_msg}")
