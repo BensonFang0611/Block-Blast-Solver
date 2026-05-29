@@ -389,11 +389,10 @@ class LogicSolver:
         self.total_scanned_solutions = 0
 
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
-        
-        self._solve_dfs(clean_grid, pieces, p_indices, [])
-                
+        just_grids = [p["grid"] for p in pieces]
+        self._solve_dfs(clean_grid, just_grids, p_indices, [])
         return self.global_best_path
-
+        
     def _solve_dfs(self, grid, pieces, p_indices, current_path):
         if not p_indices:
             self.total_scanned_solutions += 1
