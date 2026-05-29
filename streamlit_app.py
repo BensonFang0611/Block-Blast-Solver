@@ -81,11 +81,16 @@ def get_cached_solution(file_bytes):
     eng = VisionEngine(img)
     is_processed = eng.process()
     if not is_processed:
-        return False, None, None, None, None
+        return False, None, None, None, None, None  # 多留一個欄位給背景色
         
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug
+    
+    # 🎯 關鍵改動：直接從執行完的 eng 實例中抓取屬性，並加上 getattr 安全防呆
+    bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
+    
+    # 依然維持原來的回傳，只是最後面多塞一個 bg_color 帶出去
+    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color
 
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
