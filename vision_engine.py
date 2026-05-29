@@ -214,15 +214,12 @@ class VisionEngine:
             return True
         piece_area_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
         piece_area_mask = piece_area_thresh[ay_s:ay_e, :]
-        piece_area_color = self.img_orig[ay_s:ay_e, :]
+        self.piece_area_color = self.img_orig[ay_s:ay_e, :]
         by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
-        piece_area_color = self.img_orig[by_s:by_e, :]
-        bg_pixels = piece_area_color.reshape(-1, 3)
-        
-        # 🎯 修正點：將一長串多餘的 self.self 簡化為標準實例屬性 self.global_bg_color
-        self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color[5, 5]
-        bg_hsv = cv2.cvtColor(np.uint8([[self.global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
-        global_bg_h = bg_hsv[0]
+        piece_area_color_bg = self.img_orig[by_s:by_e, :]
+        bg_pixels = piece_area_color_bg.reshape(-1, 3)
+        self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
+
 
         # ==========================================
         # 解析待放方塊
