@@ -46,7 +46,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         st.error(f"Sheet Error: {e}")
         return False
 
-# --- 🛠️ 輔助功能 4：快取核心辨識與解法 (修改：額外帶出 piece_area_color) ---
+# --- 🛠️ 輔助功能 4：快取核心辨識與解法 ---
 @st.cache_data(show_spinner=False)
 def get_cached_solution(file_bytes):
     nparr = np.frombuffer(file_bytes, np.uint8)
@@ -66,7 +66,6 @@ def get_cached_solution(file_bytes):
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
     
     bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
-    # 🎯 把一整條原始的待放區圖片也 return 出去
     piece_area_img = getattr(eng, 'piece_area_color', None)
     
     return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color, piece_area_img
@@ -143,31 +142,13 @@ if file:
     sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color, eng_piece_area_img = None, None, None, None, None, None
 
     try:
-        # 🎯 接收 7 個解題後的變數
         is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color, eng_piece_area_img = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
 
     if is_processed:
-        # 🎯 核心改動點：動態將背景色轉換成全網頁網頁底色 CSS
-        if eng_bg_color is not None:
-            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
-            bg_css_color = f"rgb({r}, {g}, {b})"
-            
-            # 強制讓整個網頁（主容器與文字色彩平衡）改為遊戲當前顏色
-            st.markdown(f"""
-                <style>
-                .stApp {{
-                    background-color: {bg_css_color} !important;
-                }}
-                /* 確保輸入框或特定元件的對比文字顏色清晰 */
-                h1, h2, h3, p, span, label {{
-                    color: #ffffff !important;
-                }}
-                </style>
-            """, unsafe_allow_html=True)
-
+        # 🎯 修正點：移除原本覆蓋全網頁背景色的 st.markdown CSS，讓它恢復預設的亮/暗黑模式底色。
         st.header("💡 解法建議")
         if sol:
             step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol) + 1)], horizontal=True)
@@ -205,7 +186,7 @@ if file:
         st.markdown("---")
         st.write("**🔍 實際偵測到的待放方塊原圖**")
 
-        # 🎯 核心改動點：直接使用 piece_area_color 原圖顯示待放物區塊，乾淨俐落！
+        # 🎯 完美保留：直接用 piece_area_color 原始畫面貼上，獨立與背景並存
         if eng_piece_area_img is not None:
             st.image(eng_piece_area_img, caption="遊戲下方待放區原始畫面", channels="BGR", use_container_width=True)
         else:
@@ -239,7 +220,7 @@ with st.form("feedback_form"):
     if st.form_submit_button("🚀 送出"):
         with st.spinner("同步中..."):
             final_type = feedback_Type
-            final_detail = other_detail if "其他" in feedback_Type else "未填寫補充說明"
+            final_detail = other_detail if "開他" in feedback_Type else "未填寫補充說明"
             if not "其他" in feedback_Type and other_detail:
                 final_detail = other_detail
                 
