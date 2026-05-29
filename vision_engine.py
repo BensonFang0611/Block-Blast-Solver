@@ -250,9 +250,9 @@ class VisionEngine:
         by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
         piece_area_color = self.img_orig[by_s:by_e, :]
         bg_pixels = piece_area_color.reshape(-1, 3)
-        global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color[5, 5]
+        self.self.self.self.self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color[5, 5]
                 
-        bg_hsv = cv2.cvtColor(np.uint8([[global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        bg_hsv = cv2.cvtColor(np.uint8([[self.self.self.self.self.global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
         global_bg_h = bg_hsv[0]
 
         # ==========================================
@@ -272,7 +272,7 @@ class VisionEngine:
         for x, ay, pw, ph, _ in final_pieces:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
-            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, self.self.self.self.self.global_bg_color)
             
             self.detected_pieces.append({
                 "grid": parsed_grid,
