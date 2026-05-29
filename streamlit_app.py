@@ -18,22 +18,19 @@ SHEET_NAME = "Sheet1"
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能 1：繪製 5x5 深藍色風格方塊 (保留備用) ---
-def draw_piece_preview_5x5(piece_grid):
-    grid_size, u = 5, 40
-    canvas = np.zeros((grid_size*u, grid_size*u, 3), dtype=np.uint8)
-    rows, cols = len(piece_grid), len(piece_grid[0])
-    offset_r, offset_c = (grid_size - rows) // 2, (grid_size - cols) // 2
-    for i in range(grid_size + 1):
-        cv2.line(canvas, (0, i*u), (grid_size*u, i*u), (40, 40, 40), 1)
-        cv2.line(canvas, (i*u, 0), (i*u, grid_size*u), (40, 40, 40), 1)
-    for r in range(rows):
-        for c in range(cols):
-            if piece_grid[r][c]:
-                tr, tc = r + offset_r, c + offset_c
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (200, 160, 0), -1)
-                cv2.rectangle(canvas, (tc*u, tr*u), ((tc+1)*u, (tr+1)*u), (100, 80, 0), 1)
-    return canvas
+# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤供 HTML 置中使用 ---
+def convert_bgr_to_base64_html(img_bgr):
+    try:
+        _, buffer = cv2.imencode('.png', img_bgr)
+        b64_str = base64.b64encode(buffer).decode()
+        # 利用 flexbox 讓原始大小的圖片在不縮放的情況下完美居中
+        return f"""
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: rgba(0,0,0,0.05); border-radius: 5px;">
+            <img src="data:image/png;base64,{b64_str}" style="max-width: 100%; max-height: 100%; object-fit: scale-down;" />
+        </div>
+        """
+    except:
+        return ""
 
 # --- 🛠️ 輔助功能 2：圖片上傳 ImgBB ---
 def upload_to_imgbb(file_path):
@@ -48,7 +45,7 @@ def upload_to_imgbb(file_path):
     except:
         return "Upload Failed"
 
-# --- 🛠️ 輔助功能 3：紀錄到 Google Sheets（5 欄結構） ---
+# --- 🛠️ 輔助功能 3：紀錄到 Google Sheets ---
 def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_debug="None"):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -88,10 +85,9 @@ def get_cached_solution(file_bytes):
         
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-    
     return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug
 
-# --- 💡 第一個彈跳視窗：辨識失敗（自動回報） ---
+# --- 💡 第一個彈跳視窗：辨識失敗 ---
 @st.dialog("❌ 辨識失敗")
 def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
     st.write(f"系統偵測到錯誤（`{error_detail}`），請問您是否回報此錯誤圖片？")
@@ -179,7 +175,6 @@ if file:
             u = 400 / 8
             for s in range(idx):
                 p_idx, row, col, cl_rs, cl_cs = sol[s]
-                # 🎯 配合新的字典結構改讀取 ["grid"]
                 p = eng_detected_pieces[p_idx]["grid"]
                 color = STEP_COLORS[s % 3]
                 for pr in range(len(p)):
@@ -205,31 +200,29 @@ if file:
             st.warning("此盤面無解:..)")
 
         st.markdown("---")
+        st.write("**🔍 實際偵測到的待放方塊 ROI 畫面**")
 
-        # 🎯 修改點：從字典結構中撈出真正的 'roi_img' 進行拼接渲染！
+        # 🎯 核心改動點：建立三等份槽位，不縮放圖片且各自置中
         if eng_detected_pieces:
             try:
                 rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
                 
-                if rois:
-                    # 確保所有 ROI 高度一致
-                    max_h = max(r.shape[0] for r in rois if len(r.shape) >= 2)
-                    resized_rois = [cv2.resize(r, (int(r.shape[1] * max_h / r.shape[0]), max_h)) for r in rois]
-                    
-                    # 加上黑邊間隔
-                    gap_w = 15
-                    gap = np.zeros((max_h, gap_w, 3), dtype=np.uint8)
-                    stack_list = []
-                    for i, r_img in enumerate(resized_rois):
-                        stack_list.append(r_img)
-                        if i < len(resized_rois) - 1:
-                            stack_list.append(gap)
-                            
-                    roi_combined = np.hstack(stack_list)
-                    st.image(roi_combined, caption="實際偵測到的待放方塊 ROI 畫面", channels="BGR", use_container_width=True)
-                else:
-                    if eng_img_debug is not None:
-                        st.image(eng_img_debug, caption="系統辨識除錯圖", channels="BGR", use_container_width=True)
+                # 建立 3 個等寬的 Streamlit 欄位 (三等份)
+                p_cols = st.columns(3)
+                
+                for i in range(3):
+                    with p_cols[i]:
+                        # 如果該槽位有對應的偵測方塊圖片
+                        if i < len(rois):
+                            html_code = convert_bgr_to_base64_html(rois[i])
+                            st.markdown(html_code, unsafe_allow_html=True)
+                        else:
+                            # 留空槽位（例如剩下1或2個方塊時，維持排版不歪掉）
+                            st.markdown("""
+                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: rgba(0,0,0,0.02); border: 1px dashed rgba(0,0,0,0.1); border-radius: 5px; color: gray; font-size: 0.8em;">
+                                空槽位
+                            </div>
+                            """, unsafe_allow_html=True)
             except Exception as e:
                 st.error(f"無法顯示 ROI 畫面: {e}")
     else:
@@ -276,7 +269,9 @@ with st.form("feedback_form"):
             url_debug = upload_to_imgbb(debug_path) if has_debug else "None"
             
             if log_to_sheets(err_type=final_type, detail_info=final_detail, img_url_orig=url_orig, img_url_debug=url_debug):
-                st.success("✅ 感謝您的回饋！將根據這張圖片進行優化。")
+                st.session_state.show_thanks_dialog = True
+                st.session_state.thanks_msg = "✅ 感謝您的回饋！將根據這張圖片進行優化。"
+                st.rerun()
 
 st.markdown("""
     <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
