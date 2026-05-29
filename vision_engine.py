@@ -1,289 +1,479 @@
-import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
+import copy
 import os
-import requests
-import base64
-import pandas as pd
-from datetime import datetime, timedelta, timezone
-from streamlit_gsheets import GSheetsConnection
-from vision_engine import VisionEngine, LogicSolver
 
-# --- 🚀 核心配置 ---
-IMGBB_API_KEY = "3fcf87a9eaae07555706aa02519e78c9"
-SHEET_NAME = "Sheet1"
+class VisionEngine:
+    def __init__(self, cv_img, base_pieces=None):
+        self.img_orig = cv_img
+        self.img_debug = None
+        self.grid_state = [[0]*8 for _ in range(8)]
+        self.detected_pieces = []
+        self.warp_orig = None
+        self.piece_scale = 0.46
 
-# 顏色定義 (BGR)
-STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
-GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
+        self.legal_shapes = set()
+        self.legal_grids = []
+        self._generate_rotated_pieces(base_pieces)
 
-# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤（修改：支援傳入動態背景色） ---
-def convert_bgr_to_base64_html(img_bgr, bg_rgb_str):
-    try:
-        _, buffer = cv2.imencode('.png', img_bgr)
-        b64_str = base64.b64encode(buffer).decode()
-        # 🎯 將背景色設為視覺引擎抓到的 bg_rgb_str，達成完美無縫融合
-        return f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_rgb_str}; border-radius: 8px;">
-            <img src="data:image/png;base64,{b64_str}" style="max-width: 100%; max-height: 100%; object-fit: scale-down;" />
-        </div>
-        """
-    except:
-        return ""
+    def _generate_rotated_pieces(self, base_pieces):
+        """ 智慧核心：傳入基本方塊原型，自動衍生出 4 個旋轉角度(0, 90, 180, 270) 的特徵 """
+        if not base_pieces:
+            base_pieces = [
+                [[1]],                                  # 1x1 方塊
+                [[1, 1]],                               # 1x2 長條
+                [[1, 1, 1]],                            # 1x3 長條
+                [[1, 1, 1, 1]],                         # 1x4 長條
+                [[1, 1, 1, 1, 1]],                      # 1x5 長條
+                [[1, 1], [1, 1]],                       # 2x2 正方形
+                [[1, 1, 1], [1, 1, 1], [1, 1, 1]],      # 3x3 大正方形
+                [[1, 1, 1], [0, 1, 0]],                 # T 型方塊
+                [[1, 1, 1], [1, 0, 0]],                 # 7 型方塊
+                [[1, 1, 1], [0, 0, 1]],                 # 反 7 型方塊
+                [[1, 1], [1, 0]],                       # 小 L 型方塊
+                [[1, 1, 1], [1, 0, 0], [1, 0, 0]],      # L 型方塊
+                [[1, 1, 0], [0, 1, 1]],                 # Z 型方塊
+                [[0, 1, 1], [1, 1, 0]],                 # 反 Z 型方塊
+                [[1, 0], [0, 1]],                       # 小 \ 型方塊
+                [[1, 0, 0], [0, 1, 0], [0, 0, 1]],      # \ 型方塊
+                [[1, 1], [1, 1], [1, 1]]                # 2x3 實心矩形
+            ]
+            
+        for piece in base_pieces:
+            arr = np.array(piece, dtype=np.uint8)
+            for k in range(4):
+                rotated = np.rot90(arr, k)
+                r_rows, r_cols = rotated.shape
 
-# --- 🛠️ 輔助功能 2：圖片上傳 ImgBB ---
-def upload_to_imgbb(file_path):
-    try:
-        with open(file_path, "rb") as file:
-            img_base64 = base64.b64encode(file.read())
-        data = {"key": IMGBB_API_KEY, "image": img_base64}
-        response = requests.post("https://api.imgbb.com/1/upload", data=data)
-        if response.status_code == 200:
-            return response.json()["data"]["url"]
-        return "Upload Error"
-    except:
-        return "Upload Failed"
+                self.legal_shapes.add((r_rows, r_cols))
 
-# --- 🛠️ 輔助功能 3：紀錄到 Google Sheets ---
-def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_debug="None"):
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        tz = timezone(timedelta(hours=8))
-        now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-        new_entry = pd.DataFrame([{
-            "Timestamp": now_tw, 
-            "Feedback_Type": err_type, 
-            "Detailed_Info": detail_info, 
-            "Image_Link_Orig": img_url_orig, 
-            "Image_Link_Debug": img_url_debug 
-        }])
-        existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
-        updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
-        conn.update(worksheet=SHEET_NAME, data=updated_df)
+                grid_list = rotated.tolist()
+                if grid_list not in self.legal_grids:
+                    self.legal_grids.append(grid_list)
+    def process(self):
+        # ==========================================
+        # 影像預處理
+        # ==========================================
+        hsv = cv2.cvtColor(self.img_orig, cv2.COLOR_BGR2HSV)
+        _ , _, v_channel = cv2.split(hsv)
+        blur = cv2.GaussianBlur(v_channel, (11, 11), 0)
+        thresh_v = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        thresh_g = cv2.morphologyEx(thresh_v, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        thresh_g = cv2.morphologyEx(thresh_g, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+        self.img_debug = self.img_orig.copy()
+
+
+        # ==========================================
+        # 定位棋盤大框
+        # ==========================================
+        board_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((21, 21), np.uint8))
+        cnts, _ = cv2.findContours(board_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts: return False
+
+        candidates = []
+        img_area = v_channel.shape[0] * v_channel.shape[1]
+        for cnt in cnts:
+            x, y, w, h = cv2.boundingRect(cnt)
+            area = w * h
+            if area > (img_area * 0.1) and 0.8 <= float(w) / h <= 1.2:
+                candidates.append({'area': area, 'bx': x, 'by': y, 'bw': w, 'bh': h})
+        
+        if not candidates: return False
+        
+        rough_box = max(candidates, key=lambda c: c['area'])
+        bx, by, bw, bh = rough_box['bx'], rough_box['by'], rough_box['bw'], rough_box['bh']
+
+        sx, sy = int(bx + bw * 0.075), int(by + bh * 0.075)
+        sw, sh = int(bw * 0.85), int(bh * 0.85)
+
+        cv2.rectangle(self.img_debug, (bx, by), (bx + bw, by + bh), (255, 0, 0), 2)
+        cv2.rectangle(self.img_debug, (sx, sy), (sx + sw, sy + sh), (255, 50, 50), 2)
+
+        kernel_h, kernel_v = np.ones((1, 101), np.uint8), np.ones((101, 1), np.uint8)
+        thresh_h = cv2.morphologyEx(thresh_v, cv2.MORPH_OPEN, kernel_h)
+        thresh_h = cv2.morphologyEx(thresh_h, cv2.MORPH_CLOSE, kernel_h)
+        thresh_vt = cv2.morphologyEx(thresh_v, cv2.MORPH_OPEN, kernel_v)
+        thresh_vt = cv2.morphologyEx(thresh_vt, cv2.MORPH_CLOSE, kernel_v)
+        
+        proj_y = np.sum(thresh_h[sy:sy+sh, sx:sx+sw], axis=1) / 255
+        proj_x = np.sum(thresh_vt[sy:sy+sh, sx:sx+sw], axis=0) / 255
+
+        def get_exact_edges_from_roi_debug(projection, offset_start, rough_min, is_horizontal):
+            if len(projection) == 0: return None, None
+            
+            valid_coords = np.where(projection > 0)[0]
+            peaks_roi = []
+            current_group = [valid_coords[0]]
+            for i in range(1, len(valid_coords)):
+                if valid_coords[i] - valid_coords[i-1] <= 15:
+                    current_group.append(valid_coords[i])
+                else:
+                    weights = projection[current_group]
+                    roi_center = np.average(current_group, weights=weights)
+                    peaks_roi.append(roi_center)
+                    current_group = [valid_coords[i]]
+            weights = projection[current_group]
+            roi_center = np.average(current_group, weights=weights)
+            peaks_roi.append(roi_center)
+
+            if len(peaks_roi) < 3: return None, None
+            color_centroid = (0, 255, 255)
+            for p_roi in peaks_roi:
+                p_global = int(round(p_roi + offset_start)) 
+                if is_horizontal: 
+                    cv2.line(self.img_debug, (sx, p_global), (sx + sw // 2, p_global), color_centroid, 2, cv2.LINE_AA)
+                else: 
+                    cv2.line(self.img_debug, (p_global, sy), (p_global, sy + sh // 2), color_centroid, 2, cv2.LINE_AA)
+
+
+            diffs = np.diff(peaks_roi)
+            valid_diffs = [d for d in diffs if d > 20]
+            if not valid_diffs: return None, None
+            u_est = np.median(valid_diffs)
+
+            indices = [0]
+            clean_peaks = [peaks_roi[0]]
+            for i in range(1, len(peaks_roi)):
+                diff_u = (peaks_roi[i] - clean_peaks[-1]) / u_est
+                idx_diff = int(round(diff_u))
+                
+                if diff_u < 0.5:
+                    clean_peaks[-1] = (clean_peaks[-1] + peaks_roi[i]) / 2.0
+                    continue
+
+                indices.append(indices[-1] + idx_diff)
+                clean_peaks.append(peaks_roi[i])
+
+            if len(clean_peaks) < 3: return None, None
+
+            u_opt, offset_0_roi = np.polyfit(indices, clean_peaks, 1)
+
+            color_optimal = (0, 0, 255)
+            for k in range(0, 9): 
+                line_p_roi = offset_0_roi + k * u_opt
+                p_global = int(round(line_p_roi + offset_start)) 
+                
+                if is_horizontal:
+                    if sy <= p_global <= sy + sh:
+                        cv2.line(self.img_debug, (sx + sw // 2, p_global), (sx + sw, p_global), color_optimal, 2, cv2.LINE_AA)
+                else:
+                    if sx <= p_global <= sx + sw:
+                        cv2.line(self.img_debug, (p_global, sy + sh // 2), (p_global, sy + sh), color_optimal, 2, cv2.LINE_AA)
+
+            offset_0_global = offset_0_roi + offset_start
+            line_index = int(round((offset_0_global - rough_min) / u_opt))
+            exact_min = offset_0_global - line_index * u_opt
+            exact_max = exact_min + 8 * u_opt
+            
+            return exact_min, exact_max
+
+        # ==========================================
+        # 呼叫與保險機制
+        # ==========================================
+        min_y, max_y = get_exact_edges_from_roi_debug(proj_y, sy, by, is_horizontal=True)
+        min_x, max_x = get_exact_edges_from_roi_debug(proj_x, sx, bx, is_horizontal=False)
+
+        if None in (min_x, max_x, min_y, max_y):
+            min_x, max_x = bx + bw * 0.03, bx + bw * 0.97
+            min_y, max_y = by + bh * 0.03, by + bh * 0.97
+
+        approx = np.array([[[min_x, min_y]], [[min_x, max_y]], [[max_x, max_y]], [[max_x, min_y]]], dtype=np.int32)
+        self.pts1 = self.order_points(approx.reshape(4, 2))
+        orig_unit = np.linalg.norm(self.pts1[0] - self.pts1[1]) / 8.0
+        M = cv2.getPerspectiveTransform(self.pts1, np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
+        self.warp_orig = cv2.warpPerspective(self.img_orig, M, (400, 400))
+
+        # ==========================================
+        # 8x8 格子判定
+        # ==========================================
+        self.grid_state = [[0]*8 for _ in range(8)]
+        cell_samples = [] 
+        
+        for r in range(8):
+            for c in range(8):
+                poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.1, 0.9).astype(np.int32)
+                gx, gy, gw, gh = cv2.boundingRect(poly_pts)
+                
+                gy_s, gy_e = max(0, gy), min(thresh_v.shape[0], gy + gh)
+                gx_s, gx_e = max(0, gx), min(thresh_v.shape[1], gx + gw)
+                
+                patch_thresh = thresh_v[gy_s:gy_e, gx_s:gx_e]
+                white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 1.0
+                
+                cell_samples.append((r, c, white_ratio, gx_s, gy_s, gx_e, gy_e, poly_pts))
+        
+        best_empty_cell = min(cell_samples, key=lambda x: x[2])
+        eb_x_s, eb_y_s, eb_x_e, eb_y_e = best_empty_cell[3:7]
+        
+        board_bg_v = np.median(v_channel[eb_y_s:eb_y_e, eb_x_s:eb_x_e])
+        
+        for r, c, _, gx_s, gy_s, gx_e, gy_e, poly_pts in cell_samples:
+            cw = gx_e - gx_s
+            ch = gy_e - gy_s
+            cx_s, cx_e = gx_s + int(0.35 * cw), gx_s + int(0.65 * cw)
+            cy_s, cy_e = gy_s + int(0.35 * ch), gy_s + int(0.65 * ch)
+            
+            cell_center_patch = v_channel[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+            
+            if cell_center_patch.size > 0:
+                cell_v_median = np.median(cell_center_patch)
+                is_block = abs(int(cell_v_median) - int(board_bg_v)) > 15
+            else:
+                is_block = False
+                
+            self.grid_state[r][c] = 1 if is_block else 0
+            
+            sampling_poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.35, 0.65).astype(np.int32)
+            
+            if is_block:
+                cv2.polylines(self.img_debug, [sampling_poly_pts], True, (255, 255, 255), 3, cv2.LINE_AA)
+            else:
+                cv2.polylines(self.img_debug, [sampling_poly_pts], True, (120, 120, 120), 2, cv2.LINE_AA)
+
+            border_color = (120, 120, 120)
+            
+            if r == best_empty_cell[0] and c == best_empty_cell[1]:
+                border_color = (0, 255, 0)
+            
+            cv2.polylines(self.img_debug, [poly_pts], True, border_color, 2, cv2.LINE_AA)
+        # ==========================================
+        # 待放區ROI
+        # ==========================================
+        img_h = self.img_orig.shape[0]
+        board_h = max_y - min_y
+        ay_s, ay_e = int(max_y + 0.15 * board_h) , int(min(img_h, (max_y + 0.45 * board_h)))
+        if ay_s >= ay_e: return True 
+        piece_area_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
+        piece_area_mask = piece_area_thresh[ay_s:ay_e, :]
+        piece_area_color = self.img_orig[ay_s:ay_e, :]
+        by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
+        piece_area_color = self.img_orig[by_s:by_e, :]
+        bg_pixels = piece_area_color.reshape(-1, 3)
+        global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color[5, 5]
+                
+        bg_hsv = cv2.cvtColor(np.uint8([[global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        global_bg_h = bg_hsv[0]
+
+        # ==========================================
+        # 解析待放方塊
+        # ==========================================
+        p_cnts, _ = cv2.findContours(piece_area_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates_p = []
+        for cnt in p_cnts:
+            x, y, pw, ph = cv2.boundingRect(cnt)
+            if pw < (orig_unit * 0.5) and ph < (orig_unit * 0.5): continue
+            if pw > 6*orig_unit or ph > 6*orig_unit: continue
+            candidates_p.append([x, y + ay_s, pw, ph, x + pw/2])
+        final_pieces = sorted(candidates_p, key=lambda p: p[0])[:3]
+        p_unit = orig_unit * self.piece_scale
+        
+        self.detected_pieces = []
+        for x, ay, pw, ph, _ in final_pieces:
+            mask_roi = thresh_g[ay:ay+ph, x:x+pw]
+            bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
+            
+            self.detected_pieces.append({
+                "grid": parsed_grid,
+                "roi_img": bgr_roi.copy()
+            })
         return True
-    except Exception as e:
-        st.error(f"Sheet Error: {e}")
-        return False
 
-# --- 🛠️ 輔助功能 4：快取核心辨識與解法（修改：多回傳一個 bg_color） ---
-@st.cache_data(show_spinner=False)
-def get_cached_solution(file_bytes):
-    nparr = np.frombuffer(file_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    h, w = img.shape[:2]
-    MAX_WIDTH = 1080
-    if w > MAX_WIDTH:
-        scale = MAX_WIDTH / w
-        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    # ===================================================
+    # 辨識待放物
+    # ===================================================
+    def parse_piece_multi_channel(self, mask_roi, bgr_roi, unit, ox, oy, bg_color):
+        diff_map = np.linalg.norm(bgr_roi.astype(np.float32) - bg_color.astype(np.float32), axis=2).astype(np.uint8)
+        _, pure_piece_mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
+        nz = cv2.findNonZero(pure_piece_mask)
+        if nz is None:
+            nz = cv2.findNonZero(mask_roi)
+            if nz is None: return [[1]]
+
+        mx, my, mw, mh = cv2.boundingRect(nz)
         
-    eng = VisionEngine(img)
-    is_processed = eng.process()
-    if not is_processed:
-        return False, None, None, None, None, None
+        cols = max(1, min(5, int(round(mw / unit))))
+        rows = max(1, min(5, int(round(mh / unit))))
+        cols, rows = max(1, min(5, cols)), max(1, min(5, rows))
+
+        final_grid = None
         
-    solver = LogicSolver()
-    sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
-    
-    # 🎯 額外撈出引擎在大約第 251 行算出的 global_bg_color，如果沒抓到就給預設深色
-    bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
-    
-    return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color
+        start_thresh = 30
+        end_thresh = 6
+        step = 2
+        
+        for current_thresh in range(start_thresh, end_thresh - 1, -step):
+            grid = [[0]*cols for _ in range(rows)]
+            has_pieces = False
 
-# --- 💡 第一個彈跳視窗：辨識失敗 ---
-@st.dialog("❌ 辨識失敗")
-def show_failure_dialog(cv_img, error_detail="無法定位棋盤"):
-    st.write(f"系統偵測到錯誤（`{error_detail}`），請問您是否回報此錯誤圖片？")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("回報錯誤", type="primary", use_container_width=True):
-            with st.spinner("正在上傳回報資料..."):
-                os.makedirs("temp", exist_ok=True)
-                orig_path = "temp/failure_auto_orig.jpg"
-                cv2.imwrite(orig_path, cv_img)
-                url_orig = upload_to_imgbb(orig_path)
-                log_to_sheets(err_type="自動定位失敗", detail_info=error_detail, img_url_orig=url_orig, img_url_debug="None")
-                st.session_state.dialog_closed = True
-                st.session_state.show_dialog = False
-                st.session_state.show_thanks_dialog = True
-                st.session_state.thanks_msg = "✅ 上傳完成，非常感謝您的協助！"
-                st.rerun()
-    with col2:
-        if st.button("取消", use_container_width=True):
-            st.session_state.dialog_closed = True
-            st.session_state.show_dialog = False
-            st.session_state.show_thanks_dialog = True
-            st.session_state.thanks_msg = "💡 已取消回報，感謝您！"
-            st.rerun()
+            for r in range(rows):
+                for c in range(cols):
+                    c_s = int(mx + c * unit)
+                    c_e = int(mx + (c + 1) * unit)
+                    r_s = int(my + r * unit)
+                    r_e = int(my + (r + 1) * unit)
+                    
+                    c_e = min(c_e, bgr_roi.shape[1])
+                    r_e = min(r_e, bgr_roi.shape[0])
+                    
+                    cx_s, cx_e = c_s + int(0.25 * (c_e - c_s)), c_s + int(0.75 * (c_e - c_s))
+                    cy_s, cy_e = r_s + int(0.25 * (r_e - r_s)), r_s + int(0.75 * (r_e - r_s))
+                    
+                    cx_s, cx_e = max(0, cx_s), min(bgr_roi.shape[1], cx_e)
+                    cy_s, cy_e = max(0, cy_s), min(bgr_roi.shape[0], cy_e)
+                    
+                    patch = bgr_roi[cy_s:max(cy_s+1, cy_e), cx_s:max(cx_s+1, cx_e)]
+                    
+                    if patch.size > 0:
+                        color_dist = np.linalg.norm(np.median(patch, axis=(0,1)) - bg_color)
+                        is_p = color_dist > current_thresh
+                    else:
+                        is_p = False
+                    
+                    if is_p:
+                        grid[r][c] = 1
+                        has_pieces = True
 
-# --- 💡 第二個彈跳視窗：系統提示 ---
-@st.dialog("🔔 系統提示")
-def show_thanks_dialog(msg):
-    st.write(msg)
-    if st.button("確定", use_container_width=True):
-        st.session_state.show_thanks_dialog = False
-        st.rerun()
+            if has_pieces and (grid in self.legal_grids):
+                final_grid = grid
+                break
 
-# --- 1. UI 介面 ---
-st.set_page_config(page_title="Block Blast Solver", layout="centered")
-st.title("🧩 Block Blast Solver ")
+        if final_grid is None:
+            final_grid = grid
 
-file = st.file_uploader("📸 上傳截圖(5/26)", type=['png','jpg','jpeg','heic'], key="uploader")
+        # ==========================================
+        # 視覺化邊框繪製
+        # ==========================================
+        for r in range(len(final_grid)):
+            for c in range(len(final_grid[0])):
+                c_s = int(mx + c * unit)
+                c_e = int(mx + (c + 1) * unit)
+                r_s = int(my + r * unit)
+                r_e = int(my + (r + 1) * unit)
 
-if file is None:
-    for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "last_file_id", "logged_file", "current_error_msg"]:
-        st.session_state.pop(key, None)
-
-if file:
-    current_file_id = getattr(file, "file_id", str(file.size) + file.name)
-    if "last_file_id" not in st.session_state or st.session_state.last_file_id != current_file_id:
-        for key in ["show_dialog", "dialog_closed", "show_thanks_dialog", "thanks_msg", "current_error_msg"]:
-            st.session_state.pop(key, None)
-        st.session_state.last_file_id = current_file_id
-
-    if "logged_file" not in st.session_state or st.session_state.logged_file != current_file_id:
-        if log_to_sheets(err_type="User Visit", detail_info="None"):
-            st.session_state.logged_file = current_file_id
-
-    raw_pil_img = Image.open(file)
-    cv_img = cv2.cvtColor(np.array(raw_pil_img), cv2.COLOR_RGB2BGR)
-
-    h, w = cv_img.shape[:2]
-    MAX_WIDTH = 1080
-    if w > MAX_WIDTH:
-        scale = MAX_WIDTH / w
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-        cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    file.seek(0)  
-    file_bytes = file.read()
-    is_processed = False
-    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = None, None, None, None, None
-
-    try:
-        # 🎯 接收回傳的動態背景色
-        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = get_cached_solution(file_bytes)
-    except Exception as e:
-        st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
-        is_processed = False
-
-    if is_processed:
-        st.header("💡 解法建議")
-        if sol:
-            step_label = st.radio("步驟切換：", [f"第 {i} 步" for i in range(len(sol) + 1)], horizontal=True)
-            idx = int(step_label.split(' ')[1])
-
-            # --- 繪製解法示意圖 ---
-            canvas = eng_warp_orig.copy()
-            u = 400 / 8
-            for s in range(idx):
-                p_idx, row, col, cl_rs, cl_cs = sol[s]
-                p = eng_detected_pieces[p_idx]["grid"]
-                color = STEP_COLORS[s % 3]
-                for pr in range(len(p)):
-                    for pc in range(len(p[0])):
-                        if p[pr][pc]:
-                            x1, y1 = int((col+pc)*u), int((row+pr)*u)
-                            x2, y2 = int((col+pc+1)*u), int((row+pr+1)*u)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, -1)
-                            cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 0), 1)
+                is_p = final_grid[r][c] == 1
                 
-                if cl_rs or cl_cs:
-                    overlay = canvas.copy()
-                    if cl_rs:
-                        for cr in cl_rs:
-                            cv2.rectangle(overlay, (0, int(cr*u)), (400, int((cr+1)*u)), GRAY_ELIMINATED, -1)
-                    if cl_cs:
-                        for cc in cl_cs:
-                            cv2.rectangle(overlay, (int(cc*u), 0), (int((cc+1)*u), 400), GRAY_ELIMINATED, -1)
-                    cv2.addWeighted(overlay, 0.4, canvas, 0.6, 0, canvas)
-            
-            st.image(canvas, channels="BGR", use_container_width=True)
-        else:
-            st.warning("此盤面無解:..)")
-
-        st.markdown("---")
-        st.write("**🔍 實際偵測到的待放方塊 ROI 畫面**")
-
-        # 🎯 核心改動點：將視覺引擎抓到的 BGR 顏色轉為前端網頁的 rgb(R,G,B) 字串
-        if eng_bg_color is not None:
-            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
-            bg_css_color = f"rgb({r}, {g}, {b})"
-        else:
-            bg_css_color = "rgb(20, 20, 20)"
-
-        if eng_detected_pieces:
-            try:
-                rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
+                sx, sy, ex, ey = ox + c_s, oy + r_s, ox + c_e, oy + r_e
+                cv2.rectangle(self.img_debug, (sx, sy), (ex, ey), (255,255,255) if is_p else (120,120,120), 2)
                 
-                p_cols = st.columns(3)
-                for i in range(3):
-                    with p_cols[i]:
-                        if i < len(rois):
-                            # 將轉出的網頁顏色傳入 function
-                            html_code = convert_bgr_to_base64_html(rois[i], bg_css_color)
-                            st.markdown(html_code, unsafe_allow_html=True)
-                        else:
-                            # 留空槽位也同步使用該背景色，僅用一條極淡的白虛線標出結構
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_color}; border: 1px dashed rgba(255,255,255,0.15); border-radius: 8px; color: rgba(255,255,255,0.4); font-size: 0.8em;">
-                                空槽位
-                            </div>
-                            """, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"無法顯示 ROI 畫面: {e}")
-    else:
-        err_msg = st.session_state.get("current_error_msg", "無法定位棋盤")
-        st.error(f"❌ 辨識失敗：{err_msg}")
-        if "dialog_closed" not in st.session_state:
-            st.session_state.show_dialog = True
+                px_s, px_e = c_s + int(0.25 * (c_e - c_s)), c_s + int(0.75 * (c_e - c_s))
+                py_s, py_e = r_s + int(0.25 * (r_e - r_s)), r_s + int(0.75 * (r_e - r_s))
+                cv2.rectangle(self.img_debug, (ox + px_s, oy + py_s), (ox + px_e, oy + py_e), (255,255,255)if is_p else (120,120,120), 3)
 
-# ==========================================
-# 💡 彈跳視窗互斥控制中心
-# ==========================================
-if st.session_state.get("show_dialog", False):
-    err_msg = st.session_state.get("current_error_msg", "無法定位棋盤")
-    show_failure_dialog(cv_img, error_detail=err_msg)
-elif st.session_state.get("show_thanks_dialog", False):
-    show_thanks_dialog(st.session_state.get("thanks_msg", ""))
+        return final_grid
 
-# --- 2. Feedback 回饋系統 ---
-st.markdown("---")
-st.subheader("🚩 Feedback 錯誤回報")
-with st.form("feedback_form"):
-    feedback_Type = st.selectbox(
-        "請選擇發生的錯誤類型：",
-        ["系統提示無解，但實際上還有解法", "大棋盤格辨識錯誤", "下方待放方塊辨識錯誤", "點擊步驟切換時，畫面顯示異常", "其他（請在下方補充說明）"]
-    )
-    other_detail = st.text_input("其他原因或詳細補充說明：(選填)")
-    
-    if st.form_submit_button("🚀 送出"):
-        with st.spinner("同步中..."):
-            final_type = feedback_Type
-            final_detail = other_detail if "其他" in feedback_Type else "未填寫補充說明"
-            if not "其他" in feedback_Type and other_detail:
-                final_detail = other_detail
-                
-            os.makedirs("temp", exist_ok=True)
-            orig_path = "temp/feedback_orig.jpg"
-            debug_path = "temp/feedback_debug.jpg"
-            
-            cv2.imwrite(orig_path, cv_img)
-            has_debug = 'eng_img_debug' in locals() and eng_img_debug is not None
-            cv2.imwrite(debug_path, eng_img_debug if has_debug else cv_img)
-            
-            url_orig = upload_to_imgbb(orig_path)
-            url_debug = upload_to_imgbb(debug_path) if has_debug else "None"
-            
-            if log_to_sheets(err_type=final_type, detail_info=final_detail, img_url_orig=url_orig, img_url_debug=url_debug):
-                st.session_state.show_thanks_dialog = True
-                st.session_state.thanks_msg = "✅ 感謝您的回饋！將根據這張圖片進行優化。"
-                st.rerun()
+    # ==========================================
+    # 座標變換工具
+    # ==========================================
+    def lerp(self, p1, p2, t): return p1 + (p2 - p1) * t
+    def get_p(self, pts, row, col):
+        top = self.lerp(pts[0], pts[1], col/8.0); bot = self.lerp(pts[3], pts[2], col/8.0)
+        return self.lerp(top, bot, row/8.0)
+    def get_cell_poly(self, pts, r, c):
+        return np.array([self.get_p(pts,r,c), self.get_p(pts,r,c+1), self.get_p(pts,r+1,c+1), self.get_p(pts,r+1,c)], dtype=np.int32)
+    def get_cell_poly_sampling(self, pts, r, c, s, e):
+        return np.array([self.get_p(pts,r+s,c+s), self.get_p(pts,r+s,c+e), self.get_p(pts,r+e,c+e), self.get_p(pts,r+e,c+s)], dtype=np.int32)
+    def order_points(self, pts):
+        rect = np.zeros((4, 2), dtype="float32")
+        s = pts.sum(axis=1); rect[0], rect[2] = pts[np.argmin(s)], pts[np.argmax(s)]
+        diff = np.diff(pts, axis=1); rect[1], rect[3] = pts[np.argmin(diff)], pts[np.argmax(diff)]
+        return rect
 
-st.markdown("""
-    <div style='text-align: center; color: gray; font-size: 0.8em; margin-top: 50px;'>
-        Block Blast Solver Beta v2.1 | Powered by Color Sensing Engine
-    </div>
-""", unsafe_allow_html=True)
+class LogicSolver:
+    def solve(self, grid, pieces, p_indices, path=None):
+        """ 
+        終極主接口：完全強迫拔除所有 return 阻斷，保證窮舉全盤面！
+        """
+        self.global_best_path = None
+        self.global_min_perimeter = float('inf')
+        self.total_scanned_solutions = 0
+
+        clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
+        just_grids = [p["grid"] for p in pieces]
+        self._solve_dfs(clean_grid, just_grids, p_indices, [])
+        return self.global_best_path
+        
+    def _solve_dfs(self, grid, pieces, p_indices, current_path):
+        if not p_indices:
+            self.total_scanned_solutions += 1
+            score = self.get_perimeter(grid)
+
+            if score < self.global_min_perimeter:
+                self.global_min_perimeter = score
+                self.global_best_path = list(current_path)
+            return
+
+        for i in p_indices:
+            p = pieces[i]
+            p_rows = len(p)
+            p_cols = len(p[0])
+            
+            for r in range(9 - p_rows):
+                for c in range(9 - p_cols):
+                    
+                    if self.can_place_fast(grid, p, r, c, p_rows, p_cols):
+                        
+                        ng = [row[:] for row in grid]
+                        for pr in range(p_rows):
+                            for pc in range(p_cols):
+                                if p[pr][pc]:
+                                    ng[r+pr][c+pc] = 1
+                        
+                        rs = [idx for idx, row in enumerate(ng) if all(row)]
+                        cs = [j for j in range(8) if all(ng[idx][j] for idx in range(8))]
+                        
+                        for row_idx in rs: ng[row_idx] = [0]*8
+                        for col_idx in cs:
+                            for row_idx in range(8): ng[row_idx][col_idx] = 0
+                        
+                        placement = (i, r, c, rs, cs)
+                        current_path.append(placement)
+                        self._solve_dfs(ng, pieces, [idx for idx in p_indices if idx != i], current_path)
+                        current_path.pop()
+
+    def can_place_fast(self, grid, p, r, c, p_rows, p_cols):
+        for pr in range(p_rows):
+            for pc in range(p_cols):
+                if p[pr][pc] and grid[r+pr][c+pc]:
+                    return False
+        return True
+
+    def get_perimeter(self, grid):
+        perimeter = 0
+        for r in range(8):
+            for c in range(8):
+                if grid[r][c] == 1:
+                    if r > 0 and grid[r-1][c] == 0: perimeter += 1
+                    if r < 7 and grid[r+1][c] == 0: perimeter += 1
+                    if c > 0 and grid[r][c-1] == 0: perimeter += 1
+                    if c < 7 and grid[r][c+1] == 0: perimeter += 1
+        return perimeter
+
+    def can_place(self, grid, p, r, c):
+        for pr in range(len(p)):
+            for pc in range(len(p[0])):
+                if p[pr][pc] and (r+pr>=8 or c+pc>=8 or grid[r+pr][c+pc]):
+                    return False
+        return True
+
+    def place_only(self, grid, p, r, c):
+        ng = copy.deepcopy(grid)
+        for pr in range(len(p)):
+            for pc in range(len(p[0])):
+                if p[pr][pc]:
+                    ng[r+pr][c+pc] = 1
+        return ng
+
+    def get_cleared(self, grid):
+        rs = [i for i, row in enumerate(grid) if all(row)]
+        cs = [j for j in range(8) if all(grid[i][j] for i in range(8))]
+        return rs, cs
+
+    def simulate(self, grid, p, r, c):
+        ng = self.place_only(grid, p, r, c)
+        rs, cs = self.get_cleared(ng)
+        for i in rs: ng[i] = [0]*8
+        for j in cs:
+            for i in range(8): ng[i][j] = 0
+        return ng
