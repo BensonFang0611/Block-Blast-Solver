@@ -251,9 +251,6 @@ class VisionEngine:
         piece_area_color = self.img_orig[by_s:by_e, :]
         bg_pixels = piece_area_color.reshape(-1, 3)
         self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color[5, 5]
-                
-        bg_hsv = cv2.cvtColor(np.uint8([[self.global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
-        global_bg_h = bg_hsv[0]
 
         # ==========================================
         # 解析待放方塊
