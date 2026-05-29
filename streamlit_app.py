@@ -18,14 +18,14 @@ SHEET_NAME = "Sheet1"
 STEP_COLORS = [(0, 230, 230), (230, 100, 230), (100, 230, 100)] # 亮青、亮粉、亮綠
 GRAY_ELIMINATED = (60, 60, 60) # 消除後的半透明深灰色
 
-# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤供 HTML 置中使用 ---
-def convert_bgr_to_base64_html(img_bgr):
+# --- 🛠️ 輔助功能：將 OpenCV 影像轉為 Base64 標籤（修改：注入動態遊戲背景色） ---
+def convert_bgr_to_base64_html(img_bgr, bg_css_str):
     try:
         _, buffer = cv2.imencode('.png', img_bgr)
         b64_str = base64.b64encode(buffer).decode()
-        # 利用 flexbox 讓原始大小的圖片在不縮放的情況下完美居中
+        # 利用 flexbox 讓原始大小的圖片在不縮放的情況下完美置中，並套用動態背景色
         return f"""
-        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: rgba(0,0,0,0.05); border-radius: 5px;">
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_str}; border-radius: 8px;">
             <img src="data:image/png;base64,{b64_str}" style="max-width: 100%; max-height: 100%; object-fit: scale-down;" />
         </div>
         """
@@ -51,13 +51,7 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
         conn = st.connection("gsheets", type=GSheetsConnection)
         tz = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-        new_entry = pd.DataFrame([{
-            "Timestamp": now_tw, 
-            "Feedback_Type": err_type, 
-            "Detailed_Info": detail_info, 
-            "Image_Link_Orig": img_url_orig, 
-            "Image_Link_Debug": img_url_debug 
-        }])
+        new_entry = pd.DataFrame([{"Timestamp": now_tw, "Feedback_Type": err_type, "Detailed_Info": detail_info, "Image_Link_Orig": img_url_orig, "Image_Link_Debug": img_url_debug }])
         existing_data = conn.read(worksheet=SHEET_NAME, ttl=0)
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=updated_df)
@@ -71,7 +65,6 @@ def log_to_sheets(err_type, detail_info="None", img_url_orig="None", img_url_deb
 def get_cached_solution(file_bytes):
     nparr = np.frombuffer(file_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
     h, w = img.shape[:2]
     MAX_WIDTH = 1080
     if w > MAX_WIDTH:
@@ -86,10 +79,8 @@ def get_cached_solution(file_bytes):
     solver = LogicSolver()
     sol = solver.solve(eng.grid_state, eng.detected_pieces, list(range(len(eng.detected_pieces))))
     
-    # 🎯 關鍵改動：直接從執行完的 eng 實例中抓取屬性，並加上 getattr 安全防呆
+    # 🎯 關鍵改動：從執行完的 eng 實例中抓取正確命名的屬性
     bg_color = getattr(eng, 'global_bg_color', np.array([20, 20, 20]))
-    
-    # 依然維持原來的回傳，只是最後面多塞一個 bg_color 帶出去
     return True, sol, eng.warp_orig, eng.detected_pieces, eng.img_debug, bg_color
 
 # --- 💡 第一個彈跳視窗：辨識失敗 ---
@@ -158,13 +149,14 @@ if file:
         new_h = int(h * scale)
         cv_img = cv2.resize(cv_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    file.seek(0)  
+    file.seek(0)
     file_bytes = file.read()
     is_processed = False
-    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = None, None, None, None
+    sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = None, None, None, None, None
 
     try:
-        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug = get_cached_solution(file_bytes)
+        # 🎯 修正點：用 6 個變數去接 get_cached_solution 回傳的值，解決 ValueError 崩潰
+        is_processed, sol, eng_warp_orig, eng_detected_pieces, eng_img_debug, eng_bg_color = get_cached_solution(file_bytes)
     except Exception as e:
         st.session_state.current_error_msg = f"{type(e).__name__}: {str(e)}"
         is_processed = False
@@ -207,24 +199,29 @@ if file:
         st.markdown("---")
         st.write("**🔍 實際偵測到的待放方塊 ROI 畫面**")
 
-        # 🎯 核心改動點：建立三等份槽位，不縮放圖片且各自置中
+        # 🎯 核心改動點：將動態背景色從 BGR 轉換為網頁 CSS 的 rgb() 格式
+        if eng_bg_color is not None:
+            b, g, r = int(eng_bg_color[0]), int(eng_bg_color[1]), int(eng_bg_color[2])
+            bg_css_color = f"rgb({r}, {g}, {b})"
+        else:
+            bg_css_color = "rgb(20, 20, 20)"
+
         if eng_detected_pieces:
             try:
                 rois = [p["roi_img"] for p in eng_detected_pieces if isinstance(p, dict) and "roi_img" in p]
                 
-                # 建立 3 個等寬的 Streamlit 欄位 (三等份)
+                # 建立三等份槽位
                 p_cols = st.columns(3)
-                
                 for i in range(3):
                     with p_cols[i]:
-                        # 如果該槽位有對應的偵測方塊圖片
                         if i < len(rois):
-                            html_code = convert_bgr_to_base64_html(rois[i])
+                            # 將轉出的動態背景色注入
+                            html_code = convert_bgr_to_base64_html(rois[i], bg_css_color)
                             st.markdown(html_code, unsafe_allow_html=True)
                         else:
-                            # 留空槽位（例如剩下1或2個方塊時，維持排版不歪掉）
-                            st.markdown("""
-                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: rgba(0,0,0,0.02); border: 1px dashed rgba(0,0,0,0.1); border-radius: 5px; color: gray; font-size: 0.8em;">
+                            # 空槽位也套用該背景色，配上極淡的虛線
+                            st.markdown(f"""
+                            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 150px; background-color: {bg_css_color}; border: 1px dashed rgba(255,255,255,0.15); border-radius: 8px; color: rgba(255,255,255,0.4); font-size: 0.8em;">
                                 空槽位
                             </div>
                             """, unsafe_allow_html=True)
