@@ -214,12 +214,17 @@ class VisionEngine:
             return True
         piece_area_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
         piece_area_mask = piece_area_thresh[ay_s:ay_e, :]
-        self.piece_area_color = self.img_orig[ay_s:ay_e, :]
+        
+        # 🎯 還原點：恢復為原本的區域變數
+        piece_area_color = self.img_orig[ay_s:ay_e, :]
         by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
         piece_area_color_bg = self.img_orig[by_s:by_e, :]
         bg_pixels = piece_area_color_bg.reshape(-1, 3)
-        self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
-
+        
+        # 🎯 還原點：移除多餘的 self.self... 修正為傳統的區域變數 global_bg_color
+        global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
+        bg_hsv = cv2.cvtColor(np.uint8([[global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
+        global_bg_h = bg_hsv[0]
 
         # ==========================================
         # 解析待放方塊
@@ -239,9 +244,9 @@ class VisionEngine:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
             
-            # 🎯 修正點：同步傳入簡化後的 self.global_bg_color
-            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, self.global_bg_color)
-            self.detected_pieces.append({"grid": parsed_grid, "roi_img": bgr_roi.copy()})
+            # 🎯 還原點：恢復原本的單純列表（儲存 0 與 1 的二維 Grid 陣列）
+            parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, global_bg_color)
+            self.detected_pieces.append(parsed_grid)
         return True
 
     def parse_piece_multi_channel(self, mask_roi, bgr_roi, unit, ox, oy, bg_color):
@@ -324,8 +329,9 @@ class LogicSolver:
         self.global_min_perimeter = float('inf')
         self.total_scanned_solutions = 0
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
-        just_grids = [p["grid"] for p in pieces]
-        self._solve_dfs(clean_grid, just_grids, p_indices, [])
+        
+        # 🎯 還原點：pieces 已經回到原本單純的 grid 列表，直接指派即可
+        self._solve_dfs(clean_grid, pieces, p_indices, [])
         return self.global_best_path
 
     def _solve_dfs(self, grid, pieces, p_indices, current_path):
@@ -336,7 +342,7 @@ class LogicSolver:
                 self.global_min_perimeter = score
                 self.global_best_path = list(current_path)
             return
-        for i in p_indices:
+        for i p_indices:
             p = pieces[i]
             p_rows = len(p)
             p_cols = len(p[0])
