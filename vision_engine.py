@@ -218,7 +218,7 @@ class VisionEngine:
         piece_roi_thresh = thresh_g[ay_s:ay_e, :]
         roi_cnts, _ = cv2.findContours(piece_roi_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         clean_roi = np.zeros_like(piece_roi_thresh)
-        noise_area_threshold = (orig_unit ** 2) * 0.05 
+        noise_area_threshold = (orig_unit ** 2) * 0.01
         for cnt in roi_cnts:
             if cv2.contourArea(cnt) > noise_area_threshold:
                 cv2.drawContours(clean_roi, [cnt], -1, 255, -1)
