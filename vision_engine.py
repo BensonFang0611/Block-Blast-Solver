@@ -95,6 +95,8 @@ class VisionEngine:
             if len(projection) == 0:
                 return None, None
             valid_coords = np.where(projection > 0)[0]
+            if len(valid_coords) == 0:
+                return None, None
             peaks_roi = []
             current_group = [valid_coords[0]]
             for i in range(1, len(valid_coords)):
@@ -174,9 +176,9 @@ class VisionEngine:
             for c in range(8):
                 poly_pts = self.get_cell_poly_sampling(self.pts1, r, c, 0.1, 0.9).astype(np.int32)
                 gx, gy, gw, gh = cv2.boundingRect(poly_pts)
-                gy_s, gy_e = max(0, gy), min(thresh_v.shape[0], gy + gh)
-                gx_s, gx_e = max(0, gx), min(thresh_v.shape[1], gx + gw)
-                patch_thresh = thresh_v[gy_s:gy_e, gx_s:gx_e]
+                gy_s, gy_e = max(0, gy), min(v_channel.shape[0], gy + gh)
+                gx_s, gx_e = max(0, gx), min(v_channel.shape[1], gx + gw)
+                patch_thresh = v_channel[gy_s:gy_e, gx_s:gx_e]
                 white_ratio = np.sum(patch_thresh == 255) / patch_thresh.size if patch_thresh.size > 0 else 1.0
                 cell_samples.append((r, c, white_ratio, gx_s, gy_s, gx_e, gy_e, poly_pts))
         best_empty_cell = min(cell_samples, key=lambda x: x[2])
@@ -212,19 +214,20 @@ class VisionEngine:
         ay_s, ay_e = int(max_y + 0.15 * board_h) , int(min(img_h, (max_y + 0.45 * board_h)))
         if ay_s >= ay_e:
             return True
-        piece_area_thresh = cv2.morphologyEx(thresh_g, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
-        piece_area_mask = piece_area_thresh[ay_s:ay_e, :]
         
-        # 🎯 綁定到實例屬性，供前端直接讀取一整張完整大原圖
+        piece_roi_thresh = thresh_g[ay_s:ay_e, :]
+        roi_cnts, _ = cv2.findContours(piece_roi_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        clean_roi = np.zeros_like(piece_roi_thresh)
+        noise_area_threshold = (orig_unit ** 2) * 0.05 
+        for cnt in roi_cnts:
+            if cv2.contourArea(cnt) > noise_area_threshold:
+                cv2.drawContours(clean_roi, [cnt], -1, 255, -1)
+        piece_area_mask = cv2.morphologyEx(clean_roi, cv2.MORPH_CLOSE, np.ones((51, 51), np.uint8))
         self.piece_area_color = self.img_orig[ay_s:ay_e, :]
         by_s, by_e = int(max_y + 0.1 * board_h) , int(min(img_h, (max_y + 0.15 * board_h)))
         piece_area_color_bg = self.img_orig[by_s:by_e, :]
         bg_pixels = piece_area_color_bg.reshape(-1, 3)
-        
-        # 🎯 移除多餘的 self.self... 修正為乾淨的實例屬性 self.global_bg_color
         self.global_bg_color = np.median(bg_pixels, axis=0) if len(bg_pixels) > 0 else piece_area_color_bg[5, 5]
-        bg_hsv = cv2.cvtColor(np.uint8([[self.global_bg_color]]), cv2.COLOR_BGR2HSV)[0][0]
-        global_bg_h = bg_hsv[0]
 
         # ==========================================
         # 解析待放方塊
@@ -244,10 +247,7 @@ class VisionEngine:
             mask_roi = thresh_g[ay:ay+ph, x:x+pw]
             bgr_roi = self.img_orig[ay:ay+ph, x:x+pw]
             
-            # 🎯 配合正確的屬性名稱傳入背景色
             parsed_grid = self.parse_piece_multi_channel(mask_roi, bgr_roi, p_unit, x, ay, self.global_bg_color)
-            
-            # 完美恢復原本的二維 Grid (0 與 1 矩陣) 放入 detected_pieces
             self.detected_pieces.append(parsed_grid)
         return True
 
@@ -333,7 +333,6 @@ class LogicSolver:
         self.total_scanned_solutions = 0
         clean_grid = [[int(grid[r][c]) for c in range(8)] for r in range(8)]
         
-        # 完美回到最純粹的原生串列
         self._solve_dfs(clean_grid, pieces, p_indices, [])
         return self.global_best_path
 
